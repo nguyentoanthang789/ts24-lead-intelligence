@@ -161,6 +161,25 @@ Cấu hình tại **Cài đặt → Tự động chạy** (API: `/api/scheduler`
 - UI hiển thị **lần chạy tới** (tính theo timezone), kết quả từng bước lần chạy gần nhất, và lỗi nếu có.
 - **Ranh giới tuyệt đối:** scheduler KHÔNG bao giờ gửi tin nhắn Zalo, KHÔNG tự bật nguồn mới (nguồn tự dò luôn tắt chờ duyệt), KHÔNG tạo dữ liệu thay thế khi nguồn không phản hồi.
 
+## 9.1. Chạy toàn bộ liên tục không nghỉ (Continuous Runner — nút START)
+
+Nút **START — Chạy toàn bộ, liên tục không nghỉ** hiển thị nổi bật ở **Tổng quan** và tại **Cài đặt → Tự động chạy** (API: `/api/continuous`). Bấm START:
+
+1. Chạy ngay một vòng pipeline đầy đủ: dò nguồn mới → thu thập các nguồn mạng đang bật → chấm điểm lại lead → dọn dữ liệu quá hạn.
+2. Hết vòng nghỉ `intervalMinutes` (mặc định 10, biên 5–720 phút) rồi chạy tiếp vòng mới — lặp vô hạn 24/7 tới khi bấm STOP.
+3. Server khởi động lại khi đang bật → tự phục hồi chế độ chạy tiếp (`resumeContinuousIfNeeded` trong `src/instrumentation.ts`).
+
+Đặc tính vận hành:
+
+| Đặc tính | Chi tiết |
+|---|---|
+| Chống chồng lấn | Dùng chung mutex với Auto-Run Scheduler (`isPipelineBusy`): trúng giờ lịch 09:30 thì vòng continuous tự nhường, thử lại ở vòng sau |
+| Chịu lỗi | Vòng lỗi KHÔNG dừng máy — ghi audit `continuous.cycle_failed`, đếm lỗi liên tiếp, nghỉ interval rồi chạy tiếp |
+| STOP tức thì | Sleep giữa các vòng là interruptible — bấm STOP đánh thức loop thoát ngay; vòng đang chạy chạy xong tự nhiên |
+| Cấu hình nóng | Sửa `intervalMinutes`/bộ bước giữa chừng (PUT `/api/continuous`) → áp dụng từ vòng kế tiếp |
+| Minh bạch | UI realtime 5s/lần: số vòng hoàn tất, phút nghỉ, lỗi liên tiếp, giờ vòng tới, kết quả từng bước vòng gần nhất; audit `continuous.started/stopped/cycle_finished/cycle_failed/config_updated` |
+| Ranh giới | Vẫn tôn trọng robots.txt + hạn tốc độ từng nguồn; KHÔNG tự gửi tin nhắn Zalo; nguồn tự dò luôn tắt chờ duyệt |
+
 ## 10. Chấm điểm & xem độ bao phủ
 
 - **Thang điểm 0–100** (cấu hình tại Cài đặt): Phù hợp sản phẩm 0–30 · Bằng chứng nhu cầu 0–25 · Phân khúc 0–20 · Khả năng liên hệ 0–15 · Độ mới dữ liệu 0–10. Lưu cấu hình → tự tăng `ruleVersion`; mọi LeadScore lưu kèm phiên bản quy tắc.
@@ -228,6 +247,7 @@ Ma trận kiểm thử theo spec: **A** chuẩn hóa+khử trùng lặp · **B**
 | Dò nguồn | `GET /api/discovery` (danh mục ứng viên), `POST /api/discovery` (dò + đăng ký, nguồn mới luôn tắt) |
 | Job | `GET/POST /api/jobs`, `POST /api/jobs/[id]` (pause/resume/cancel/retry) |
 | Scheduler | `GET /api/scheduler` (trạng thái + lần chạy tới), `PUT` (lưu cấu hình), `POST` (chạy ngay) |
+| Chạy liên tục | `GET /api/continuous` (trạng thái realtime), `POST` (`{action:"start"\|"stop"}` — nút START), `PUT` (intervalMinutes/bộ bước) |
 | Bao phủ | `GET /api/coverage` |
 | Tiếp cận | `GET/POST /api/outreach`, `POST /api/outreach/draft`, `GET/POST /api/outreach/events` |
 | Chiến dịch | `GET/POST /api/campaigns` |

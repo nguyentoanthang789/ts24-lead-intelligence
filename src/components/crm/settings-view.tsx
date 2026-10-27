@@ -15,6 +15,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogT
 import { Database, Plus, RefreshCw, Trash2, AlarmClock } from "lucide-react";
 import { toast } from "sonner";
 import { api, fmtDate, PRODUCT_NAMES } from "@/lib/crm-api";
+import { ContinuousRunnerCard } from "@/components/crm/continuous-runner";
 
 type Settings = {
   config: {
@@ -175,7 +176,8 @@ export function SettingsView() {
         )}
       </TabsContent>
 
-      <TabsContent value="autorun">
+      <TabsContent value="autorun" className="space-y-4">
+        <ContinuousRunnerCard />
         <AutoRunPanel />
       </TabsContent>
 

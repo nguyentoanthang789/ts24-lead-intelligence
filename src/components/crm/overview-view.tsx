@@ -9,6 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Building2, AlertTriangle, ClipboardList, ShieldCheck, Users } from "lucide-react";
 import { api, fmtDate, PRODUCT_NAMES } from "@/lib/crm-api";
 import { SourceStatusBadge } from "@/components/crm/badges";
+import { ContinuousRunnerCard } from "@/components/crm/continuous-runner";
 
 type Overview = {
   hasData: boolean;
@@ -41,6 +42,8 @@ export function OverviewView({ onGoTo }: { onGoTo: (view: string) => void }) {
 
   return (
     <div className="space-y-6">
+      <ContinuousRunnerCard />
+
       <div className="grid gap-4 md:grid-cols-4">
         {stats.map((s) => (
           <Card key={s.label}>

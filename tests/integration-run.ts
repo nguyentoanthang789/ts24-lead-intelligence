@@ -177,6 +177,14 @@ async function main() {
   const audits = await db.auditEvent.count();
   check("Test F: thao tác quan trọng có audit log", audits >= 1);
 
+  // --- Continuous Runner: cấu hình chạy liên tục (không khởi động loop thật trong test) ---
+  const cont = await import("../src/server/continuous");
+  check("Continuous: mặc định chưa chạy, đủ 4 bước bật", cont.DEFAULT_CONTINUOUS_CONFIG.running === false && cont.DEFAULT_CONTINUOUS_CONFIG.autoDiscover && cont.DEFAULT_CONTINUOUS_CONFIG.autoRunSources && cont.DEFAULT_CONTINUOUS_CONFIG.autoRescore && cont.DEFAULT_CONTINUOUS_CONFIG.retentionCleanup);
+  check("Continuous: chặn interval ngoài 5..720", cont.validateContinuousConfig({ ...cont.DEFAULT_CONTINUOUS_CONFIG, intervalMinutes: 3 }).ok === false);
+  await cont.saveContinuousConfig({ ...cont.DEFAULT_CONTINUOUS_CONFIG, intervalMinutes: 15 }, "test");
+  const ccfg = await cont.getContinuousConfig();
+  check("Continuous: lưu/đọc lại cấu hình round-trip (AppSetting)", ccfg.intervalMinutes === 15 && ccfg.running === false);
+
   await db.$disconnect();
   console.log(`\nKết quả integration: ${passed} PASS, ${failed} FAIL`);
   if (failed > 0) process.exit(1);

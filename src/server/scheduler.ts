@@ -201,7 +201,7 @@ export async function getSchedulerStatus() {
   const nextRunAt = cfg.enabled ? computeNextRunAt(new Date(), cfg)?.toISOString() ?? null : null;
   return {
     config: cfg,
-    running: rt.running,
+    running: isPipelineBusy(),
     lastResult: rt.lastResult,
     lastError: rt.lastError,
     nextRunAt,
@@ -216,26 +216,46 @@ export type PipelineRunResult = {
   message?: string;
 };
 
-/** Chạy trọn pipeline tự động. Đang chạy thì bỏ qua (tránh chồng lấn). */
-export async function runScheduledPipeline(trigger: "scheduled" | "manual"): Promise<PipelineRunResult> {
-  const rt = runtime();
-  if (rt.running) {
+export type PipelineTrigger = "scheduled" | "manual" | "continuous";
+
+export type PipelineSteps = {
+  autoDiscover: boolean;
+  autoRunSources: boolean;
+  autoRescore: boolean;
+  retentionCleanup: boolean;
+};
+
+// Mutex DÙNG CHUNG giữa scheduler theo lịch và continuous runner — bất kể nguồn gọi
+// (thủ công / theo lịch / liên tục), cùng lúc chỉ được MỘT pipeline chạy để không
+// chồng lấn job thu thập. Lưu trên globalThis để sống qua HMR.
+const gBusy = globalThis as typeof globalThis & { __ts24PipelineBusy?: boolean };
+
+export function isPipelineBusy(): boolean {
+  return gBusy.__ts24PipelineBusy === true;
+}
+
+/**
+ * Chạy trọn 4 bước pipeline với bộ bước tuỳ ý (scheduler theo lịch hoặc continuous runner).
+ * Đang chạy thì bỏ qua (ok:false, message) — KHÔNG xếp hàng, tránh chồng lấn dữ liệu.
+ */
+export async function runPipelineSteps(stepsCfg: PipelineSteps, trigger: PipelineTrigger): Promise<PipelineRunResult> {
+  if (isPipelineBusy()) {
     return { ok: false, steps: [], finishedAt: new Date().toISOString(), message: "Pipeline đang chạy — bỏ qua lần gọi này" };
   }
-  rt.running = true;
+  gBusy.__ts24PipelineBusy = true;
   const steps: string[] = [];
+  const actor = trigger === "continuous" ? "continuous-runner" : "scheduler";
   try {
-    const cfg = await getSchedulerConfig();
-    await audit({ actor: "scheduler", action: "scheduler.run_started", entityType: "Scheduler", detail: { trigger } });
+    await audit({ actor, action: "scheduler.run_started", entityType: "Scheduler", detail: { trigger } });
 
     // 1) Dò nguồn mới (tuỳ chọn) — nguồn mới luôn chờ xem xét + tắt
-    if (cfg.autoDiscover) {
+    if (stepsCfg.autoDiscover) {
       const probed = await probeAndRegister({ fetchImpl: fetch });
       steps.push(`dò nguồn: ${probed.length} ứng viên, thêm mới ${probed.filter((p) => p.registered).length}`);
     }
 
     // 2) Chạy job cho các nguồn MẠNG đang bật (bỏ qua nguồn file/upload — không có gì để thu)
-    if (cfg.autoRunSources) {
+    if (stepsCfg.autoRunSources) {
       const networkTypes = ["COMPANY_WEBSITE", "PUBLIC_DIRECTORY", "OFFICIAL_API", "OFFICIAL_REGISTRY"];
       const sources = await db.source.findMany({
         where: { isActive: true, type: { in: networkTypes } },
@@ -254,7 +274,7 @@ export async function runScheduledPipeline(trigger: "scheduled" | "manual"): Pro
     }
 
     // 3) Chấm điểm lại toàn bộ lead
-    if (cfg.autoRescore) {
+    if (stepsCfg.autoRescore) {
       const companies = await db.company.findMany({ select: { id: true } });
       const config = await getScoringConfig();
       await rescoreCompanies(companies.map((c) => c.id), config);
@@ -262,7 +282,7 @@ export async function runScheduledPipeline(trigger: "scheduled" | "manual"): Pro
     }
 
     // 4) Dọn bản ghi quá hạn lưu giữ (retentionDays theo từng nguồn)
-    if (cfg.retentionCleanup) {
+    if (stepsCfg.retentionCleanup) {
       const sources = await db.source.findMany({ select: { id: true, retentionDays: true } });
       let deleted = 0;
       for (const s of sources) {
@@ -273,22 +293,34 @@ export async function runScheduledPipeline(trigger: "scheduled" | "manual"): Pro
       steps.push(`dọn dữ liệu quá hạn lưu giữ: ${deleted} bản ghi`);
     }
 
+    await audit({ actor, action: "scheduler.run_finished", entityType: "Scheduler", detail: { trigger, steps } });
+    return { ok: true, steps, finishedAt: new Date().toISOString() };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await audit({ actor, action: "scheduler.run_failed", entityType: "Scheduler", detail: { trigger, error: message } });
+    return { ok: false, steps, finishedAt: new Date().toISOString(), message };
+  } finally {
+    gBusy.__ts24PipelineBusy = false;
+  }
+}
+
+/** Chạy pipeline theo cấu hình scheduler hằng ngày (dùng cho lịch + nút chạy thử). */
+export async function runScheduledPipeline(trigger: "scheduled" | "manual"): Promise<PipelineRunResult> {
+  const rt = runtime();
+  const cfg = await getSchedulerConfig();
+  const r = await runPipelineSteps(cfg, trigger);
+  if (r.ok) {
     const now = new Date();
     await saveSchedulerConfig(
       { ...cfg, lastRunAt: now.toISOString(), lastRunDay: dayStringInTz(now, cfg.timezone) },
       "scheduler"
     );
-    rt.lastResult = { trigger, steps, finishedAt: now.toISOString() };
+    rt.lastResult = { trigger, steps: r.steps, finishedAt: r.finishedAt };
     rt.lastError = null;
-    await audit({ actor: "scheduler", action: "scheduler.run_finished", entityType: "Scheduler", detail: { trigger, steps } });
-    return { ok: true, steps, finishedAt: now.toISOString() };
-  } catch (err) {
-    rt.lastError = err instanceof Error ? err.message : String(err);
-    await audit({ actor: "scheduler", action: "scheduler.run_failed", entityType: "Scheduler", detail: { trigger, error: rt.lastError } });
-    return { ok: false, steps, finishedAt: new Date().toISOString(), message: rt.lastError };
-  } finally {
-    rt.running = false;
+  } else if (r.message && !r.message.includes("đang chạy")) {
+    rt.lastError = r.message;
   }
+  return r;
 }
 
 /** Tick mỗi phút — bắn pipeline khi tới giờ cấu hình */
