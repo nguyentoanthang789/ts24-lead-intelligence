@@ -89,7 +89,7 @@ describe("validateSchedulerConfig", () => {
   test("cấu hình hợp lệ → ok", () => {
     const v = validateSchedulerConfig({
       enabled: true, runAt: "09:30", timezone: "Asia/Ho_Chi_Minh",
-      autoDiscover: true, autoRunSources: true, autoRescore: true, retentionCleanup: true,
+      autoDiscover: true, autoRunSources: true, autoImportInbox: true, autoRescore: true, retentionCleanup: true,
     });
     expect(v.ok).toBe(true);
   });

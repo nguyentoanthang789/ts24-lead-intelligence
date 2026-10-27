@@ -39,6 +39,7 @@ const PutSchema = z
     intervalMinutes: z.number().optional(),
     autoDiscover: z.boolean().optional(),
     autoRunSources: z.boolean().optional(),
+    autoImportInbox: z.boolean().optional(),
     autoRescore: z.boolean().optional(),
     retentionCleanup: z.boolean().optional(),
   })

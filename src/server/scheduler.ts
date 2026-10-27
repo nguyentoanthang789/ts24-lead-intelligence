@@ -13,6 +13,7 @@ import { getScoringConfig } from "./settings";
 import { rescoreCompanies } from "./import-pipeline";
 import { runCollectionJob } from "./sources/adapters";
 import { probeAndRegister } from "./discovery";
+import { scanInbox } from "./inbox";
 
 export type SchedulerConfig = {
   enabled: boolean;
@@ -20,6 +21,7 @@ export type SchedulerConfig = {
   timezone: string; // IANA, VD: Asia/Ho_Chi_Minh
   autoDiscover: boolean;
   autoRunSources: boolean;
+  autoImportInbox: boolean;
   autoRescore: boolean;
   retentionCleanup: boolean;
   lastRunAt: string | null; // ISO instant lần chạy gần nhất
@@ -32,6 +34,7 @@ export const DEFAULT_SCHEDULER_CONFIG: SchedulerConfig = {
   timezone: "Asia/Ho_Chi_Minh",
   autoDiscover: true,
   autoRunSources: true,
+  autoImportInbox: true,
   autoRescore: true,
   retentionCleanup: true,
   lastRunAt: null,
@@ -131,7 +134,7 @@ export function validateSchedulerConfig(cfg: unknown): { ok: boolean; errors: st
   if (typeof c.timezone !== "string" || !isIANAZone(c.timezone)) {
     errors.push("timezone phải là tên IANA hợp lệ (VD Asia/Ho_Chi_Minh)");
   }
-  for (const k of ["autoDiscover", "autoRunSources", "autoRescore", "retentionCleanup"] as const) {
+  for (const k of ["autoDiscover", "autoRunSources", "autoImportInbox", "autoRescore", "retentionCleanup"] as const) {
     if (typeof c[k] !== "boolean") errors.push(`${k} phải là boolean`);
   }
   return { ok: errors.length === 0, errors };
@@ -171,7 +174,8 @@ export async function saveSchedulerConfig(cfg: SchedulerConfig, actor = "operato
     detail: {
       enabled: cfg.enabled, runAt: cfg.runAt, timezone: cfg.timezone,
       autoDiscover: cfg.autoDiscover, autoRunSources: cfg.autoRunSources,
-      autoRescore: cfg.autoRescore, retentionCleanup: cfg.retentionCleanup,
+      autoImportInbox: cfg.autoImportInbox, autoRescore: cfg.autoRescore,
+      retentionCleanup: cfg.retentionCleanup,
     },
   });
 }
@@ -221,6 +225,7 @@ export type PipelineTrigger = "scheduled" | "manual" | "continuous";
 export type PipelineSteps = {
   autoDiscover: boolean;
   autoRunSources: boolean;
+  autoImportInbox: boolean;
   autoRescore: boolean;
   retentionCleanup: boolean;
 };
@@ -273,7 +278,17 @@ export async function runPipelineSteps(stepsCfg: PipelineSteps, trigger: Pipelin
       steps.push(`job thu thập: ${okJobs} hoàn tất, ${failJobs} lỗi (trên ${sources.length} nguồn mạng đang bật)`);
     }
 
-    // 3) Chấm điểm lại toàn bộ lead
+    // 3) Nhập tự động hộp thư inbox — kênh tự động LUÔN cho lead mới từ tệp người vận hành thả vào
+    if (stepsCfg.autoImportInbox) {
+      const inbox = await scanInbox({ maxFiles: 10 });
+      steps.push(
+        `hộp thư nhập tự động: ${inbox.filesProcessed} tệp, ${inbox.rowsImported} bản ghi` +
+        ` (tạo mới ${inbox.createdCompanies}, hợp nhất ${inbox.mergedCompanies}, trùng ${inbox.duplicateRecords}` +
+        (inbox.failedFiles > 0 ? `, LỖI ${inbox.failedFiles} tệp` : "") + ")"
+      );
+    }
+
+    // 4) Chấm điểm lại toàn bộ lead
     if (stepsCfg.autoRescore) {
       const companies = await db.company.findMany({ select: { id: true } });
       const config = await getScoringConfig();
@@ -281,7 +296,7 @@ export async function runPipelineSteps(stepsCfg: PipelineSteps, trigger: Pipelin
       steps.push(`chấm điểm lại: ${companies.length} lead`);
     }
 
-    // 4) Dọn bản ghi quá hạn lưu giữ (retentionDays theo từng nguồn)
+    // 5) Dọn bản ghi quá hạn lưu giữ (retentionDays theo từng nguồn)
     if (stepsCfg.retentionCleanup) {
       const sources = await db.source.findMany({ select: { id: true, retentionDays: true } });
       let deleted = 0;

@@ -35,7 +35,7 @@ type AuditRow = { id: string; actor: string; action: string; entityType: string;
 type SchedulerStatus = {
   config: {
     enabled: boolean; runAt: string; timezone: string;
-    autoDiscover: boolean; autoRunSources: boolean; autoRescore: boolean; retentionCleanup: boolean;
+    autoDiscover: boolean; autoRunSources: boolean; autoImportInbox: boolean; autoRescore: boolean; retentionCleanup: boolean;
     lastRunAt: string | null; lastRunDay: string | null;
   };
   running: boolean;
@@ -249,7 +249,8 @@ function AutoRunPanel() {
         body: JSON.stringify({
           enabled: cfg.enabled, runAt: cfg.runAt, timezone: cfg.timezone,
           autoDiscover: cfg.autoDiscover, autoRunSources: cfg.autoRunSources,
-          autoRescore: cfg.autoRescore, retentionCleanup: cfg.retentionCleanup,
+          autoImportInbox: cfg.autoImportInbox, autoRescore: cfg.autoRescore,
+          retentionCleanup: cfg.retentionCleanup,
         }),
       });
       setSt(s);
@@ -319,6 +320,7 @@ function AutoRunPanel() {
             {([
               ["autoDiscover", "Tự dò nguồn mới (nguồn mới luôn tắt, chờ duyệt)"],
               ["autoRunSources", "Tự chạy job các nguồn mạng đang bật"],
+              ["autoImportInbox", "Tự nhập hộp thư inbox (tệp CSV/XLSX trong upload/inbox)"],
               ["autoRescore", "Tự chấm điểm lại toàn bộ lead"],
               ["retentionCleanup", "Tự dọn bản ghi quá hạn lưu giữ (retentionDays)"],
             ] as const).map(([k, label]) => (

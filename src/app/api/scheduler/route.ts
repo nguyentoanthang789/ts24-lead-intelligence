@@ -12,7 +12,6 @@ import {
   DEFAULT_SCHEDULER_CONFIG,
   SchedulerConfig,
 } from "@/server/scheduler";
-
 export async function GET() {
   try {
     return ok(await getSchedulerStatus());
@@ -27,6 +26,7 @@ const PutSchema = z.object({
   timezone: z.string(),
   autoDiscover: z.boolean(),
   autoRunSources: z.boolean(),
+  autoImportInbox: z.boolean().default(true), // tương thích PUT từ tab cũ chưa có trường này
   autoRescore: z.boolean(),
   retentionCleanup: z.boolean(),
 });

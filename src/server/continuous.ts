@@ -27,28 +27,32 @@ import { runPipelineSteps } from "./scheduler";
 
 export type ContinuousConfig = {
   running: boolean; // trạng thái mong muốn — true thì server restart cũng tự chạy lại
-  intervalMinutes: number; // thời gian nghỉ giữa các vòng (5..720 phút)
+  intervalMinutes: number; // thời gian nghỉ giữa các vòng (0..720) — 0 = KHÔNG NGHỈ
   autoDiscover: boolean;
   autoRunSources: boolean;
+  autoImportInbox: boolean;
   autoRescore: boolean;
   retentionCleanup: boolean;
 };
 
 export const DEFAULT_CONTINUOUS_CONFIG: ContinuousConfig = {
   running: false,
-  intervalMinutes: 10,
+  intervalMinutes: 0, // mặc định KHÔNG NGHỈ — chạy vòng mới ngay sau vòng trước
   autoDiscover: true,
   autoRunSources: true,
+  autoImportInbox: true,
   autoRescore: true,
   retentionCleanup: true,
 };
 
-export const MIN_INTERVAL_MINUTES = 5;
+export const MIN_INTERVAL_MINUTES = 0;
 export const MAX_INTERVAL_MINUTES = 720;
+/** Khi interval = 0 (không nghỉ) vẫn chốt 5 giây giữa các vòng để không ép CPU/DB */
+export const NO_REST_COOLDOWN_MS = 5_000;
 
 // ---------------- Pure helpers (unit-test được, không đụng DB) ----------------
 
-/** Chuẩn hóa interval: số nguyên 5..720 phút, null nếu sai */
+/** Chuẩn hóa interval: số nguyên 0..720 phút (0 = không nghỉ), null nếu sai */
 export function normalizeIntervalMinutes(v: unknown): number | null {
   let n: number;
   if (typeof v === "number") n = Math.round(v);
@@ -65,9 +69,9 @@ export function validateContinuousConfig(cfg: unknown): { ok: boolean; errors: s
   if (!c || typeof c !== "object") return { ok: false, errors: ["Cấu hình trống"] };
   if (typeof c.running !== "boolean") errors.push("running phải là boolean");
   if (normalizeIntervalMinutes(c.intervalMinutes) === null) {
-    errors.push(`intervalMinutes phải là số nguyên ${MIN_INTERVAL_MINUTES}..${MAX_INTERVAL_MINUTES} (phút)`);
+    errors.push(`intervalMinutes phải là số nguyên ${MIN_INTERVAL_MINUTES}..${MAX_INTERVAL_MINUTES} (phút, 0 = không nghỉ)`);
   }
-  for (const k of ["autoDiscover", "autoRunSources", "autoRescore", "retentionCleanup"] as const) {
+  for (const k of ["autoDiscover", "autoRunSources", "autoImportInbox", "autoRescore", "retentionCleanup"] as const) {
     if (typeof c[k] !== "boolean") errors.push(`${k} phải là boolean`);
   }
   return { ok: errors.length === 0, errors };
@@ -112,7 +116,8 @@ export async function saveContinuousConfig(cfg: ContinuousConfig, actor = "opera
     detail: {
       running: cfg.running, intervalMinutes: cfg.intervalMinutes,
       autoDiscover: cfg.autoDiscover, autoRunSources: cfg.autoRunSources,
-      autoRescore: cfg.autoRescore, retentionCleanup: cfg.retentionCleanup,
+      autoImportInbox: cfg.autoImportInbox, autoRescore: cfg.autoRescore,
+      retentionCleanup: cfg.retentionCleanup,
     },
   });
   return cfg;
@@ -211,6 +216,7 @@ async function loop(): Promise<void> {
           {
             autoDiscover: cfg.autoDiscover,
             autoRunSources: cfg.autoRunSources,
+            autoImportInbox: cfg.autoImportInbox,
             autoRescore: cfg.autoRescore,
             retentionCleanup: cfg.retentionCleanup,
           },
@@ -251,9 +257,10 @@ async function loop(): Promise<void> {
 
       // Đọc lại cấu hình mỗi vòng để nhặt interval/bộ bước mới mà không cần restart
       const cfgNext = await getContinuousConfig();
-      const ms = cfgNext.intervalMinutes * 60_000;
-      rt.nextCycleAt = new Date(Date.now() + ms).toISOString();
-      await sleepInterruptible(ms, rt);
+      // interval = 0 → KHÔNG NGHỈ: chỉ chốt NO_REST_COOLDOWN_MS rồi chạy vòng mới ngay
+      const restMs = cfgNext.intervalMinutes === 0 ? NO_REST_COOLDOWN_MS : cfgNext.intervalMinutes * 60_000;
+      rt.nextCycleAt = new Date(Date.now() + restMs).toISOString();
+      await sleepInterruptible(restMs, rt);
       rt.nextCycleAt = null;
     }
   } finally {

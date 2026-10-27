@@ -6,26 +6,25 @@ import {
   validateContinuousConfig,
   shouldContinueLoop,
   DEFAULT_CONTINUOUS_CONFIG,
-  MIN_INTERVAL_MINUTES,
   MAX_INTERVAL_MINUTES,
 } from "../../src/server/continuous";
 
 describe("normalizeIntervalMinutes", () => {
-  test("nhận giá trị hợp lệ trong biên 5..720", () => {
+  test("nhận giá trị hợp lệ trong biên 0..720 (0 = không nghỉ)", () => {
+    expect(normalizeIntervalMinutes(0)).toBe(0); // KHÔNG NGHỈ
     expect(normalizeIntervalMinutes(10)).toBe(10);
-    expect(normalizeIntervalMinutes(5)).toBe(MIN_INTERVAL_MINUTES);
     expect(normalizeIntervalMinutes(720)).toBe(MAX_INTERVAL_MINUTES);
     expect(normalizeIntervalMinutes("15")).toBe(15); // từ input form dạng chuỗi
+    expect(normalizeIntervalMinutes(4)).toBe(4); // giá trị nhỏ vẫn hợp lệ từ khi cho phép 0
   });
   test("làm tròn số thập phân", () => {
     expect(normalizeIntervalMinutes(9.6)).toBe(10);
     expect(normalizeIntervalMinutes(10.2)).toBe(10);
   });
   test("chặn ngoài biên và sai kiểu", () => {
-    expect(normalizeIntervalMinutes(4)).toBeNull(); // dưới tối thiểu — tránh phá nguồn
-    expect(normalizeIntervalMinutes(721)).toBeNull();
-    expect(normalizeIntervalMinutes(0)).toBeNull();
+    expect(normalizeIntervalMinutes(-1)).toBeNull(); // số âm — sai
     expect(normalizeIntervalMinutes(-5)).toBeNull();
+    expect(normalizeIntervalMinutes(721)).toBeNull();
     expect(normalizeIntervalMinutes("abc")).toBeNull();
     expect(normalizeIntervalMinutes("")).toBeNull();
     expect(normalizeIntervalMinutes(undefined)).toBeNull();
@@ -41,7 +40,7 @@ describe("validateContinuousConfig", () => {
     expect(validateContinuousConfig(valid).ok).toBe(true);
   });
   test("chặn interval sai", () => {
-    const v = validateContinuousConfig({ ...valid, intervalMinutes: 3 });
+    const v = validateContinuousConfig({ ...valid, intervalMinutes: -3 });
     expect(v.ok).toBe(false);
     expect(v.errors.join(" ")).toContain("intervalMinutes");
     const v2 = validateContinuousConfig({ ...valid, intervalMinutes: "10 phút" as unknown as number });
@@ -74,11 +73,12 @@ describe("shouldContinueLoop", () => {
 });
 
 describe("DEFAULT_CONTINUOUS_CONFIG", () => {
-  test("mặc định an toàn: chưa chạy, nghỉ 10 phút, bật đủ 4 bước", () => {
+  test("mặc định an toàn: chưa chạy, KHÔNG NGHỈ (0 phút), đủ 5 bước bật", () => {
     expect(DEFAULT_CONTINUOUS_CONFIG.running).toBe(false);
-    expect(DEFAULT_CONTINUOUS_CONFIG.intervalMinutes).toBe(10);
+    expect(DEFAULT_CONTINUOUS_CONFIG.intervalMinutes).toBe(0); // bỏ nghỉ giữa chừng theo yêu cầu vận hành
     expect(DEFAULT_CONTINUOUS_CONFIG.autoDiscover).toBe(true);
     expect(DEFAULT_CONTINUOUS_CONFIG.autoRunSources).toBe(true);
+    expect(DEFAULT_CONTINUOUS_CONFIG.autoImportInbox).toBe(true);
     expect(DEFAULT_CONTINUOUS_CONFIG.autoRescore).toBe(true);
     expect(DEFAULT_CONTINUOUS_CONFIG.retentionCleanup).toBe(true);
   });

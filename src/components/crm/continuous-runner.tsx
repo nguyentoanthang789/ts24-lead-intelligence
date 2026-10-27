@@ -18,7 +18,7 @@ import { api, fmtDate } from "@/lib/crm-api";
 type ContinuousStatus = {
   config: {
     running: boolean; intervalMinutes: number;
-    autoDiscover: boolean; autoRunSources: boolean; autoRescore: boolean; retentionCleanup: boolean;
+    autoDiscover: boolean; autoRunSources: boolean; autoImportInbox: boolean; autoRescore: boolean; retentionCleanup: boolean;
   };
   active: boolean;
   cycleCount: number;
@@ -79,8 +79,8 @@ export function ContinuousRunnerCard() {
 
   async function saveInterval() {
     const n = parseInt(intervalMin, 10);
-    if (!Number.isFinite(n) || n < 5 || n > 720) {
-      toast.error("Thời gian nghỉ phải là số nguyên từ 5 đến 720 phút");
+    if (!Number.isFinite(n) || n < 0 || n > 720) {
+      toast.error("Thời gian nghỉ phải là số nguyên từ 0 đến 720 phút (0 = không nghỉ)");
       return;
     }
     setBusy(true);
@@ -153,11 +153,19 @@ export function ContinuousRunnerCard() {
         </div>
 
         <p className="text-xs text-muted-foreground">
-          Mỗi vòng chạy đầy đủ: dò nguồn mới → thu thập các nguồn mạng đang bật → chấm điểm lại lead → dọn dữ liệu quá hạn.
-          Hết vòng nghỉ <b>{st.config.intervalMinutes}</b> phút rồi chạy tiếp — hoạt động 24/7 cho tới khi bấm STOP
-          (server khởi động lại cũng tự chạy tiếp). Vẫn tôn trọng robots.txt &amp; hạn tốc độ của từng nguồn;
-          <b> không tự gửi tin nhắn Zalo</b>.
+          Mỗi vòng chạy đầy đủ: dò nguồn mới → thu thập các nguồn mạng đang bật → <b>nhập tự động hộp thư inbox</b> → chấm điểm lại lead → dọn dữ liệu quá hạn.
+          {st.config.intervalMinutes === 0
+            ? <> Hết vòng <b>chạy vòng mới NGAY</b> (không nghỉ — chỉ chốt 5 giây) — hoạt động 24/7 cho tới khi bấm STOP; server khởi động lại cũng tự chạy tiếp.</>
+            : <> Hết vòng nghỉ <b>{st.config.intervalMinutes}</b> phút rồi chạy tiếp — hoạt động 24/7 cho tới khi bấm STOP (server khởi động lại cũng tự chạy tiếp).</>}
+          {" "}Vẫn tôn trọng robots.txt &amp; hạn tốc độ của từng nguồn; <b>không tự gửi tin nhắn Zalo</b>.
         </p>
+        <Alert>
+          <AlertTitle className="text-sm">Vì sao lead chưa chảy ra — 2 kênh để bot tự tạo lead</AlertTitle>
+          <AlertDescription className="text-xs space-y-1">
+            <p><b>Kênh 1 — Nguồn mạng:</b> vào <b>Nguồn dữ liệu</b> duyệt + bật nguồn đã được phép. Phần lớn danh bạ VN chủ động chặn bot (HTTP 403) và hệ thống <b>không né cơ chế chống bot</b> — chỉ bật được nguồn nào cho phép truy cập.</p>
+            <p><b>Kênh 2 — Hộp thư inbox (luôn chạy):</b> thả tệp CSV/XLSX doanh nghiệp vào thư mục <code className="font-mono">upload/inbox/</code> — bot tự nhập ở vòng kế tiếp: chuẩn hóa → khử trùng lặp → chấm điểm → lead xuất hiện ở Lead Explorer. Tệp đã nhập chuyển sang <code className="font-mono">processed/</code>, tệp lỗi sang <code className="font-mono">failed/</code>.</p>
+          </AlertDescription>
+        </Alert>
 
         <div className="grid gap-3 sm:grid-cols-3">
           <div className="rounded-lg border p-3">
@@ -165,7 +173,7 @@ export function ContinuousRunnerCard() {
             <div className="text-xs text-muted-foreground">Vòng đã hoàn tất</div>
           </div>
           <div className="rounded-lg border p-3">
-            <div className="text-2xl font-bold">{st.config.intervalMinutes}</div>
+            <div className="text-2xl font-bold">{st.config.intervalMinutes === 0 ? "0 (không nghỉ)" : st.config.intervalMinutes}</div>
             <div className="text-xs text-muted-foreground">Phút nghỉ giữa các vòng</div>
           </div>
           <div className="rounded-lg border p-3">
@@ -176,12 +184,12 @@ export function ContinuousRunnerCard() {
 
         <div className="flex items-end gap-2">
           <div className="space-y-1">
-            <Label className="text-sm">Nghỉ giữa các vòng (phút, 5–720)</Label>
+            <Label className="text-sm">Nghỉ giữa các vòng (phút, 0 = không nghỉ, tối đa 720)</Label>
             <Input
-              type="number" min={5} max={720}
+              type="number" min={0} max={720}
               value={intervalMin}
               onChange={(e) => setIntervalMin(e.target.value)}
-              className="w-28" aria-label="Phút nghỉ giữa các vòng"
+              className="w-28" aria-label="Phút nghỉ giữa các vòng, 0 là không nghỉ"
             />
           </div>
           <Button variant="outline" onClick={saveInterval} disabled={busy}>

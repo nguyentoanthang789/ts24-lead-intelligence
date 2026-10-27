@@ -165,8 +165,8 @@ Cấu hình tại **Cài đặt → Tự động chạy** (API: `/api/scheduler`
 
 Nút **START — Chạy toàn bộ, liên tục không nghỉ** hiển thị nổi bật ở **Tổng quan** và tại **Cài đặt → Tự động chạy** (API: `/api/continuous`). Bấm START:
 
-1. Chạy ngay một vòng pipeline đầy đủ: dò nguồn mới → thu thập các nguồn mạng đang bật → chấm điểm lại lead → dọn dữ liệu quá hạn.
-2. Hết vòng nghỉ `intervalMinutes` (mặc định 10, biên 5–720 phút) rồi chạy tiếp vòng mới — lặp vô hạn 24/7 tới khi bấm STOP.
+1. Chạy ngay một vòng pipeline đầy đủ: dò nguồn mới → thu thập các nguồn mạng đang bật → **nhập tự động hộp thư inbox** → chấm điểm lại lead → dọn dữ liệu quá hạn.
+2. Hết vòng nghỉ `intervalMinutes` rồi chạy tiếp vòng mới — lặp vô hạn 24/7 tới khi bấm STOP. **`intervalMinutes = 0` (mặc định) = KHÔNG NGHỈ**: vòng mới chạy ngay sau vòng trước, chỉ chốt 5 giây để không ép CPU/DB.
 3. Server khởi động lại khi đang bật → tự phục hồi chế độ chạy tiếp (`resumeContinuousIfNeeded` trong `src/instrumentation.ts`).
 
 Đặc tính vận hành:
@@ -175,10 +175,22 @@ Nút **START — Chạy toàn bộ, liên tục không nghỉ** hiển thị n�
 |---|---|
 | Chống chồng lấn | Dùng chung mutex với Auto-Run Scheduler (`isPipelineBusy`): trúng giờ lịch 09:30 thì vòng continuous tự nhường, thử lại ở vòng sau |
 | Chịu lỗi | Vòng lỗi KHÔNG dừng máy — ghi audit `continuous.cycle_failed`, đếm lỗi liên tiếp, nghỉ interval rồi chạy tiếp |
+| Không nghỉ | `intervalMinutes = 0` (mặc định): back-to-back với cooldown 5 giây (`NO_REST_COOLDOWN_MS`); biên hợp lệ 0–720 phút |
 | STOP tức thì | Sleep giữa các vòng là interruptible — bấm STOP đánh thức loop thoát ngay; vòng đang chạy chạy xong tự nhiên |
 | Cấu hình nóng | Sửa `intervalMinutes`/bộ bước giữa chừng (PUT `/api/continuous`) → áp dụng từ vòng kế tiếp |
 | Minh bạch | UI realtime 5s/lần: số vòng hoàn tất, phút nghỉ, lỗi liên tiếp, giờ vòng tới, kết quả từng bước vòng gần nhất; audit `continuous.started/stopped/cycle_finished/cycle_failed/config_updated` |
 | Ranh giới | Vẫn tôn trọng robots.txt + hạn tốc độ từng nguồn; KHÔNG tự gửi tin nhắn Zalo; nguồn tự dò luôn tắt chờ duyệt |
+
+## 9.2. Hộp thư nhập tự động (Auto-Import Inbox) — kênh tự động LUÔN tạo lead
+
+Phần lớn danh bạ/doanh nghiệp VN **chủ động chặn bot** (HTTP 403, WAF, CAPTCHA) và hệ thống **KHÔNG né các cơ chế chống bot** (đường viền tuân thủ) — vì vậy kênh "cào mạng" chỉ thu được dữ liệu khi nguồn ĐÃ được phép và cho phép truy cập. Để bot tự tạo lead 24/7 bất chấp điều đó, mỗi vòng pipeline có bước **nhập hộp thư** (module `src/server/inbox.ts`):
+
+1. Người vận hành thả tệp CSV/XLSX doanh nghiệp vào thư mục `upload/inbox/` (đổi vị trí qua biến môi trường `TS24_INBOX_DIR`).
+2. Bot tự quét ở vòng kế tiếp (tối đa 10 tệp/vòng): parse (CSV tự dò delimiter, hỗ trợ XLSX) → chuẩn hóa → khử trùng lặp (MST/domain/tên+địa chỉ) → chấm điểm → lead xuất hiện ở Lead Explorer.
+3. Tệp nhập xong chuyển sang `upload/inbox/processed/`, tệp lỗi chuyển sang `failed/` — không nhập lại, không nhân bản.
+4. Mỗi tệp = 1 CollectionJob + audit `inbox.file_imported`; nguồn tổng hợp "Hộp thư nhập tự động (upload/inbox)" tự tạo và luôn bật.
+
+Giới hạn an toàn: mỗi tệp tối đa 10MB / 5000 dòng (đồng bộ import upload); tệp khác đuôi `.csv/.xlsx/.xls` bị bỏ qua.
 
 ## 10. Chấm điểm & xem độ bao phủ
 
@@ -247,7 +259,8 @@ Ma trận kiểm thử theo spec: **A** chuẩn hóa+khử trùng lặp · **B**
 | Dò nguồn | `GET /api/discovery` (danh mục ứng viên), `POST /api/discovery` (dò + đăng ký, nguồn mới luôn tắt) |
 | Job | `GET/POST /api/jobs`, `POST /api/jobs/[id]` (pause/resume/cancel/retry) |
 | Scheduler | `GET /api/scheduler` (trạng thái + lần chạy tới), `PUT` (lưu cấu hình), `POST` (chạy ngay) |
-| Chạy liên tục | `GET /api/continuous` (trạng thái realtime), `POST` (`{action:"start"\|"stop"}` — nút START), `PUT` (intervalMinutes/bộ bước) |
+| Chạy liên tục | `GET /api/continuous` (trạng thái realtime), `POST` (`{action:"start"\|"stop"}` — nút START), `PUT` (intervalMinutes 0–720/bộ bước) |
+| Hộp thư | (tự động trong pipeline — thả tệp CSV/XLSX vào `upload/inbox/`, không cần gọi API) |
 | Bao phủ | `GET /api/coverage` |
 | Tiếp cận | `GET/POST /api/outreach`, `POST /api/outreach/draft`, `GET/POST /api/outreach/events` |
 | Chiến dịch | `GET/POST /api/campaigns` |

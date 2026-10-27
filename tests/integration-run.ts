@@ -15,6 +15,8 @@ const DB_FILE = "/home/z/my-project/db/test-int.db";
 const PROJECT = "/home/z/my-project";
 
 process.env.DATABASE_URL = TEST_DB;
+// Inbox test dùng thư mục riêng để không đụng inbox thật — PHẢI đặt TRƯỚC khi import module
+process.env.TS24_INBOX_DIR = "/home/z/my-project/db/test-inbox";
 
 // 1) dọn DB cũ + push schema
 if (existsSync(DB_FILE)) rmSync(DB_FILE);
@@ -179,11 +181,34 @@ async function main() {
 
   // --- Continuous Runner: cấu hình chạy liên tục (không khởi động loop thật trong test) ---
   const cont = await import("../src/server/continuous");
-  check("Continuous: mặc định chưa chạy, đủ 4 bước bật", cont.DEFAULT_CONTINUOUS_CONFIG.running === false && cont.DEFAULT_CONTINUOUS_CONFIG.autoDiscover && cont.DEFAULT_CONTINUOUS_CONFIG.autoRunSources && cont.DEFAULT_CONTINUOUS_CONFIG.autoRescore && cont.DEFAULT_CONTINUOUS_CONFIG.retentionCleanup);
-  check("Continuous: chặn interval ngoài 5..720", cont.validateContinuousConfig({ ...cont.DEFAULT_CONTINUOUS_CONFIG, intervalMinutes: 3 }).ok === false);
+  check("Continuous: mặc định chưa chạy, đủ 5 bước bật, KHÔNG NGHỈ (0 phút)", cont.DEFAULT_CONTINUOUS_CONFIG.running === false && cont.DEFAULT_CONTINUOUS_CONFIG.intervalMinutes === 0 && cont.DEFAULT_CONTINUOUS_CONFIG.autoDiscover && cont.DEFAULT_CONTINUOUS_CONFIG.autoRunSources && cont.DEFAULT_CONTINUOUS_CONFIG.autoImportInbox && cont.DEFAULT_CONTINUOUS_CONFIG.autoRescore && cont.DEFAULT_CONTINUOUS_CONFIG.retentionCleanup);
+  check("Continuous: chặn interval ngoài 0..720", cont.validateContinuousConfig({ ...cont.DEFAULT_CONTINUOUS_CONFIG, intervalMinutes: -1 }).ok === false);
   await cont.saveContinuousConfig({ ...cont.DEFAULT_CONTINUOUS_CONFIG, intervalMinutes: 15 }, "test");
   const ccfg = await cont.getContinuousConfig();
   check("Continuous: lưu/đọc lại cấu hình round-trip (AppSetting)", ccfg.intervalMinutes === 15 && ccfg.running === false);
+
+  // --- Inbox tự nhập: quét tệp → chuẩn hóa/khử trùng lặp → lead → tệp chuyển processed/ ---
+  const inboxMod = await import("../src/server/inbox");
+  const fs2 = await import("fs");
+  inboxMod.ensureInboxDirs();
+  fs2.writeFileSync(
+    inboxMod.INBOX_DIR + "/test-inbox-fixture.csv",
+    "ten_doanh_nghiep,ma_so_thue,dien_thoai,tinh,nganh_nghe\n" +
+    "Cong ty TNHH Test Inbox A,0305512342,0912345678,TP. Hồ Chí Minh,thuong mai\n" +
+    "Cong ty TNHH Test Inbox A,0305512342,0912345678,TP. Hồ Chí Minh,thuong mai\n", // dòng 2 trùng — phải bị khử
+    "utf-8"
+  );
+  fs2.writeFileSync(inboxMod.INBOX_DIR + "/test-inbox-broken.txt", "không phải tệp dữ liệu — bị bỏ qua", "utf-8");
+  const inboxRes = await inboxMod.scanInbox({ maxFiles: 5 });
+  check("Inbox: bỏ qua tệp không phải CSV/XLSX", inboxRes.filesProcessed === 1);
+  check("Inbox: nhập 2 dòng, trùng bị khử", inboxRes.rowsImported === 2 && inboxRes.duplicateRecords >= 1);
+  const inboxCompanyCount = await db.company.count({ where: { taxCode: "0305512342" } });
+  check("Inbox: 2 dòng trùng MST → chỉ tạo đúng 1 công ty lead", inboxCompanyCount === 1 && (inboxRes.createdCompanies === 1 || inboxRes.mergedCompanies === 1));
+  check("Inbox: tệp đã nhập chuyển sang processed/", fs2.existsSync(inboxMod.PROCESSED_DIR) && fs2.readdirSync(inboxMod.PROCESSED_DIR).some((f) => f.includes("test-inbox-fixture.csv")));
+  check("Inbox: nguồn hộp thư được tạo và đang bật", (await db.source.findFirst({ where: { name: inboxMod.INBOX_SOURCE_NAME } }))?.isActive === true);
+  // Quét lần nữa → 0 tệp (đã chuyển hết) — không nhập lại, không nhân bản lead
+  const inboxRes2 = await inboxMod.scanInbox({ maxFiles: 5 });
+  check("Inbox: quét lại không nhân bản (tệp đã chuyển đi)", inboxRes2.filesProcessed === 0);
 
   await db.$disconnect();
   console.log(`\nKết quả integration: ${passed} PASS, ${failed} FAIL`);
