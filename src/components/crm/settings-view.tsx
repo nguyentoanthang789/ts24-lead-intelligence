@@ -7,11 +7,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Database, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Database, Plus, RefreshCw, Trash2, AlarmClock } from "lucide-react";
 import { toast } from "sonner";
 import { api, fmtDate, PRODUCT_NAMES } from "@/lib/crm-api";
 
@@ -30,6 +31,18 @@ type Settings = {
 type TemplateRow = { id: string; name: string; productCode: string | null; body: string; isActive: boolean };
 type SupRow = { id: string; value: string; scope: string; reason: string | null; createdAt: string };
 type AuditRow = { id: string; actor: string; action: string; entityType: string; entityId: string | null; detail: string | null; createdAt: string };
+type SchedulerStatus = {
+  config: {
+    enabled: boolean; runAt: string; timezone: string;
+    autoDiscover: boolean; autoRunSources: boolean; autoRescore: boolean; retentionCleanup: boolean;
+    lastRunAt: string | null; lastRunDay: string | null;
+  };
+  running: boolean;
+  lastResult: { trigger: string; steps: string[]; finishedAt: string } | null;
+  lastError: string | null;
+  nextRunAt: string | null;
+  startedAt: string | null;
+};
 
 export function SettingsView() {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -105,6 +118,7 @@ export function SettingsView() {
     <Tabs defaultValue="scoring">
       <TabsList className="flex flex-wrap h-auto">
         <TabsTrigger value="scoring">Chấm điểm</TabsTrigger>
+        <TabsTrigger value="autorun">Tự động chạy</TabsTrigger>
         <TabsTrigger value="templates">Mẫu tin nhắn</TabsTrigger>
         <TabsTrigger value="suppression">Danh sách loại trừ</TabsTrigger>
         <TabsTrigger value="audit">Audit log</TabsTrigger>
@@ -161,6 +175,10 @@ export function SettingsView() {
         )}
       </TabsContent>
 
+      <TabsContent value="autorun">
+        <AutoRunPanel />
+      </TabsContent>
+
       <TabsContent value="templates">
         <TemplatesPanel />
       </TabsContent>
@@ -205,6 +223,138 @@ const WEIGHT_LABELS: Record<string, string> = {
   contact: "Khả năng liên hệ (0-15)",
   freshness: "Độ mới dữ liệu (0-10)",
 };
+
+function AutoRunPanel() {
+  const [st, setSt] = useState<SchedulerStatus | null>(null);
+  const [cfg, setCfg] = useState<SchedulerStatus["config"] | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    const s = await api<SchedulerStatus>("/api/scheduler");
+    setSt(s);
+    setCfg(s.config);
+  }, []);
+  useEffect(() => {
+    load().catch((e) => toast.error((e as Error).message));
+  }, [load]);
+
+  async function save() {
+    if (!cfg) return;
+    setBusy(true);
+    try {
+      const s = await api<SchedulerStatus>("/api/scheduler", {
+        method: "PUT",
+        body: JSON.stringify({
+          enabled: cfg.enabled, runAt: cfg.runAt, timezone: cfg.timezone,
+          autoDiscover: cfg.autoDiscover, autoRunSources: cfg.autoRunSources,
+          autoRescore: cfg.autoRescore, retentionCleanup: cfg.retentionCleanup,
+        }),
+      });
+      setSt(s);
+      setCfg(s.config);
+      toast.success("Đã lưu cấu hình tự động chạy");
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runNow() {
+    setBusy(true);
+    toast.info("Đang chạy pipeline dữ liệu...");
+    try {
+      const r = await api<{ steps: string[] }>("/api/scheduler", { method: "POST", body: JSON.stringify({}) });
+      toast.success(r.steps.length ? r.steps.join(" · ") : "Hoàn tất (không có bước nào bật)");
+      load();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!cfg || !st) return <Skeleton className="h-64" />;
+
+  return (
+    <div className="space-y-4">
+      <Alert>
+        <AlarmClock className="h-4 w-4" />
+        <AlertTitle>Tự động chạy pipeline dữ liệu hằng ngày</AlertTitle>
+        <AlertDescription>
+          Đến giờ cấu hình, hệ thống tự: dò nguồn mới (tuỳ chọn) → chạy job thu thập các nguồn mạng đang bật →
+          chấm điểm lại lead → dọn bản ghi quá hạn lưu giữ. Toàn bộ đều ghi audit log.
+          <b> Tuyệt đối không tự gửi tin nhắn Zalo</b> — bước gửi tin vẫn do bạn thao tác thủ công.
+        </AlertDescription>
+      </Alert>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-base">Lịch chạy</CardTitle></CardHeader>
+          <CardContent className="p-4 pt-0 space-y-3">
+            <div className="flex items-center justify-between">
+              <Label className="text-sm">Bật tự động chạy</Label>
+              <Switch checked={cfg.enabled} onCheckedChange={(v) => setCfg({ ...cfg, enabled: v })} aria-label="Bật tự động chạy" />
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <Label className="text-sm">Giờ chạy hằng ngày</Label>
+              <Input type="time" value={cfg.runAt} onChange={(e) => setCfg({ ...cfg, runAt: e.target.value })} className="w-32" />
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <Label className="text-sm">Múi giờ (IANA)</Label>
+              <Input value={cfg.timezone} onChange={(e) => setCfg({ ...cfg, timezone: e.target.value })} className="w-52" />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Server tick mỗi 60 giây. Lần chạy tới: <b>{st.nextRunAt ? fmtDate(st.nextRunAt) : "—"}</b>
+              {st.lastResult && <> · Lần chạy trước: {fmtDate(st.lastResult.finishedAt)} ({st.lastResult.trigger === "scheduled" ? "theo lịch" : "thủ công"})</>}
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-base">Các bước tự động</CardTitle></CardHeader>
+          <CardContent className="p-4 pt-0 space-y-3">
+            {([
+              ["autoDiscover", "Tự dò nguồn mới (nguồn mới luôn tắt, chờ duyệt)"],
+              ["autoRunSources", "Tự chạy job các nguồn mạng đang bật"],
+              ["autoRescore", "Tự chấm điểm lại toàn bộ lead"],
+              ["retentionCleanup", "Tự dọn bản ghi quá hạn lưu giữ (retentionDays)"],
+            ] as const).map(([k, label]) => (
+              <div key={k} className="flex items-center justify-between gap-3">
+                <Label className="text-sm">{label}</Label>
+                <Switch checked={cfg[k]} onCheckedChange={(v) => setCfg({ ...cfg, [k]: v })} aria-label={label} />
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <Button onClick={save} disabled={busy}>Lưu cấu hình</Button>
+        <Button variant="outline" onClick={runNow} disabled={busy || st.running}>
+          <RefreshCw className="h-4 w-4 mr-1" /> {st.running ? "Đang chạy..." : "Chạy ngay (thử)"}
+        </Button>
+      </div>
+
+      {st.lastResult && (
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-base">Kết quả lần chạy gần nhất</CardTitle></CardHeader>
+          <CardContent className="p-4 pt-0">
+            <ul className="list-disc pl-5 text-sm space-y-1">
+              {st.lastResult.steps.map((s, i) => <li key={i}>{s}</li>)}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
+      {st.lastError && (
+        <Alert variant="destructive">
+          <AlertTitle>Lỗi lần chạy gần nhất</AlertTitle>
+          <AlertDescription>{st.lastError}</AlertDescription>
+        </Alert>
+      )}
+    </div>
+  );
+}
 const THRESHOLD_LABELS: Record<string, string> = {
   high: "Ngưỡng ưu tiên cao ≥",
   needsVerification: "Ngưỡng cần xác minh ≥",

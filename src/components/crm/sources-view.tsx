@@ -8,12 +8,13 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Radar } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Pause, Play, Plus, ShieldCheck, Square, RotateCcw } from "lucide-react";
+import { Pause, Play, Plus, ShieldCheck, Square, RotateCcw } from "lucide-react"; // Radar import ở dòng trên
 import { toast } from "sonner";
 import { api, fmtDate, SOURCE_TYPE_LABELS } from "@/lib/crm-api";
 import { SourceStatusBadge } from "@/components/crm/badges";
@@ -37,6 +38,7 @@ export function SourcesView() {
   const [jobs, setJobs] = useState<Job[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  const [discoveryOpen, setDiscoveryOpen] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -107,7 +109,8 @@ export function SourcesView() {
         </AlertDescription>
       </Alert>
 
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        <DiscoveryDialog open={discoveryOpen} onOpenChange={setDiscoveryOpen} onDone={() => load()} />
         <AddSourceDialog open={addOpen} onOpenChange={setAddOpen} onDone={() => { setAddOpen(false); load(); }} />
       </div>
 
@@ -208,6 +211,86 @@ export function SourcesView() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+type ProbeResult = {
+  name: string; type: string; url: string; description: string;
+  robotsStatus: string; robotsNote: string;
+  reachable: boolean; httpStatus: number | null;
+  alreadyRegistered: boolean; registered: boolean; note: string;
+};
+
+function DiscoveryDialog({ open, onOpenChange, onDone }: { open: boolean; onOpenChange: (v: boolean) => void; onDone: () => void }) {
+  const [results, setResults] = useState<ProbeResult[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [customUrl, setCustomUrl] = useState("");
+
+  async function run(urls?: string[]) {
+    setBusy(true);
+    setResults(null);
+    try {
+      const r = await api<{ results: ProbeResult[]; registered: number }>("/api/discovery", { method: "POST", body: JSON.stringify(urls ? { urls } : {}) });
+      setResults(r.results);
+      toast.success(`Đã dò ${r.results.length} ứng viên — thêm mới ${r.registered} nguồn (mặc định tắt, chờ xem xét)`);
+      onDone();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => { onOpenChange(v); if (!v) setResults(null); }}>
+      <DialogTrigger asChild><Button variant="outline"><Radar className="h-4 w-4 mr-1" /> Tự động dò nguồn</Button></DialogTrigger>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader><DialogTitle>Tự động dò ứng viên nguồn dữ liệu</DialogTitle></DialogHeader>
+        <p className="text-sm text-muted-foreground">
+          Hệ thống tự kiểm tra robots.txt + khả năng truy cập HTTP của các danh bạ/cổng công khai phổ biến
+          (và URL tùy chọn nếu nhập) rồi thêm vào danh mục ở trạng thái <b>chờ xem xét + tắt</b>.
+          Bạn xác minh điều khoản sử dụng dữ liệu rồi mới bật thu thập.
+        </p>
+        <div className="flex gap-2">
+          <Input value={customUrl} onChange={(e) => setCustomUrl(e.target.value)} placeholder="URL tùy chọn (https://...) — có thể bỏ trống" />
+          <Button onClick={() => run(customUrl ? [customUrl] : undefined)} disabled={busy}>
+            {busy ? "Đang dò... (tối đa ~15s)" : "Dò ngay"}
+          </Button>
+        </div>
+        {results && (
+          <div className="max-h-[360px] overflow-y-auto rounded-lg border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Ứng viên</TableHead>
+                  <TableHead>robots</TableHead>
+                  <TableHead>Truy cập</TableHead>
+                  <TableHead>Kết quả</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {results.map((r) => (
+                  <TableRow key={r.url}>
+                    <TableCell>
+                      <div className="font-medium text-sm">{r.name}</div>
+                      <div className="text-xs text-muted-foreground truncate max-w-[220px]">{r.url}</div>
+                    </TableCell>
+                    <TableCell className="text-xs">{r.robotsStatus}</TableCell>
+                    <TableCell className="text-xs">{r.reachable ? `OK (HTTP ${r.httpStatus})` : `Không (HTTP ${r.httpStatus ?? "—"})`}</TableCell>
+                    <TableCell>
+                      <Badge variant={r.registered ? "default" : "secondary"} className={r.registered ? "bg-emerald-600" : ""}>
+                        {r.registered ? "Đã thêm mới" : r.alreadyRegistered ? "Đã có sẵn" : "Chưa thêm"}
+                      </Badge>
+                      <div className="mt-1 text-xs text-muted-foreground max-w-[220px]">{r.note}</div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 

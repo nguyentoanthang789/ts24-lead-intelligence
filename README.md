@@ -3,6 +3,7 @@
 Hệ thống tìm kiếm, đánh giá và quản lý khách hàng tiềm năng cho các sản phẩm, dịch vụ TS24 — MVP modular monolith.
 
 > **Nguyên tắc cốt lõi:** tự động hóa tìm kiếm, xử lý dữ liệu, phân loại, cá nhân hóa nội dung và quản lý công việc; **không tự động gửi tin nhắn** qua tài khoản Zalo cá nhân.
+> **Tự động hóa:** tự dò ứng viên nguồn (Source Discovery) + tự chạy pipeline hằng ngày theo lịch (Scheduler, mặc định 09:30 Asia/Ho_Chi_Minh).
 
 ---
 
@@ -24,6 +25,8 @@ Hệ thống tìm kiếm, đánh giá và quản lý khách hàng tiềm năng c
 │  ─ dedup           identity resolution (MST>domain>phone>tên)   │
 │  ─ import-pipeline parse→validate→normalize→dedup→persist→score │
 │  ─ sources/        Source Registry + Collector Adapters         │
+│  ─ discovery       tự dò ứng viên nguồn (robots + HTTP probe)   │
+│  ─ scheduler       tự chạy pipeline theo lịch hằng ngày         │
 │  ─ scoring-config  thang điểm + tiêu chí sản phẩm (versioned)   │
 │  ─ matching        fit từng sản phẩm A–F                        │
 │  ─ scoring         tổng điểm 0–100 có giải thích                │
@@ -51,7 +54,7 @@ Hệ thống tìm kiếm, đánh giá và quản lý khách hàng tiềm năng c
 src/
   app/
     page.tsx                 # SPA shell — sidebar điều hướng 6 view
-    api/                     # 20 route handlers (xem mục API)
+    api/                     # 22 route handlers (xem mục API)
   components/crm/            # view components + badges + lead detail
   lib/crm-api.ts             # client fetcher + nhãn tiếng Việt
   server/
@@ -59,6 +62,9 @@ src/
     scoring-config.ts matching.ts scoring.ts coverage.ts
     templates.ts compliance.ts settings.ts http.ts seed.ts
     sources/adapters.ts      # Collector Engine
+    discovery.ts             # Source Discovery — tự dò ứng viên nguồn
+    scheduler.ts             # Auto-Run Scheduler — tự chạy theo lịch
+  instrumentation.ts         # khởi động scheduler khi server bật
 prisma/schema.prisma         # 18 model (SQLite, portable sang PostgreSQL)
 scripts/seed.ts              # nạp dữ liệu demo
 tests/unit/*.test.ts         # unit tests (bun test)
@@ -118,6 +124,17 @@ Xuất dữ liệu: `/api/export?view=companies` hoặc nút **Xuất CSV** (c�
 
 ## 8. Thêm nguồn dữ liệu hợp lệ
 
+### 8.1. Tự động dò nguồn (Source Discovery)
+
+Bấm **Nguồn dữ liệu → Tự động dò nguồn → Dò ngay**: hệ thống tự kiểm tra `robots.txt` + khả năng truy cập HTTP của các danh bạ/cổng công khai phổ biến Việt Nam (dangkykinhdoanh.gov.vn, gso.gov.vn, masothue.com, trangvangvietnam.com, yellowpages.vn, thongtindoanhnghiep.co) và URL tùy chọn nếu nhập.
+
+- Kết quả dò trung thực: robots OK/RESTRICTED/CHECK_FAILED, HTTP status — **không giả định cho phép khi lỗi**.
+- Ứng viên đạt điều kiện được **tự thêm vào Registry** nhưng luôn ở trạng thái **chờ xem xét + tắt** — bạn xác minh điều khoản sử dụng dữ liệu rồi mới bật.
+- Ứng viên trùng URL/tên nguồn có sẵn → bỏ qua (không nhân đôi).
+- Scheduler tự động dò cũng dùng chính cơ chế này (nếu bật "Tự dò nguồn mới").
+
+### 8.2. Thêm thủ công và bật thu thập
+
 1. **Nguồn dữ liệu → Thêm nguồn** — khai báo tên, loại, URL, phạm vi được phép, quyền sử dụng.
 2. Nguồn mới luôn `REVIEW_REQUIRED` + tắt. Bấm **Kiểm tra** → hệ thống fetch `robots.txt`, kiểm tra khả năng truy cập HTTP.
 3. Sau khi xác minh điều khoản: chuyển chính sách sang **Được phép** rồi mới bật công tắc.
@@ -125,7 +142,26 @@ Xuất dữ liệu: `/api/export?view=companies` hoặc nút **Xuất CSV** (c�
 
 Chính sách tuyệt đối: không thu thập khi `robots.txt` cấm (`Disallow: /`), không vượt CAPTCHA/chống bot/paywall, không đăng nhập trái phép, **không tạo dữ liệu giả** khi không lấy được (job ghi nhận và dừng an toàn).
 
-## 9. Chấm điểm & xem độ bao phủ
+## 9. Tự động chạy hằng ngày (Auto-Run Scheduler)
+
+Cấu hình tại **Cài đặt → Tự động chạy** (API: `/api/scheduler`). Scheduler chạy trong tiến trình server (khởi động qua `src/instrumentation.ts`), tick mỗi 60 giây.
+
+| Cấu hình | Mặc định | Ý nghĩa |
+|---|---|---|
+| `enabled` | `false` | Bật/tắt chạy tự động theo lịch |
+| `runAt` | `09:30` | Giờ chạy hằng ngày (HH:MM theo timezone) |
+| `timezone` | `Asia/Ho_Chi_Minh` | Múi giờ IANA tính giờ chạy + chống chạy 2 lần/ngày |
+| `autoDiscover` | `true` | Tự dò ứng viên nguồn mới (xem 8.1) |
+| `autoRunSources` | `true` | Tự chạy job các nguồn **mạng đang bật** (file/upload bị bỏ qua) |
+| `autoRescore` | `true` | Tự chấm điểm lại toàn bộ lead theo cấu hình hiện tại |
+| `retentionCleanup` | `true` | Tự xóa `SourceRecord` quá hạn `retentionDays` của từng nguồn |
+
+- Đúng giờ cấu hình (chưa chạy trong ngày theo timezone) → pipeline tự chạy, ghi `scheduler.run_started/finished/failed` vào audit log, lưu `lastRunAt` + `lastRunDay`.
+- Nút **Chạy ngay (thử)** để chạy pipeline thủ công không cần đợi lịch; có chống chồng lấn (đang chạy → bỏ qua).
+- UI hiển thị **lần chạy tới** (tính theo timezone), kết quả từng bước lần chạy gần nhất, và lỗi nếu có.
+- **Ranh giới tuyệt đối:** scheduler KHÔNG bao giờ gửi tin nhắn Zalo, KHÔNG tự bật nguồn mới (nguồn tự dò luôn tắt chờ duyệt), KHÔNG tạo dữ liệu thay thế khi nguồn không phản hồi.
+
+## 10. Chấm điểm & xem độ bao phủ
 
 - **Thang điểm 0–100** (cấu hình tại Cài đặt): Phù hợp sản phẩm 0–30 · Bằng chứng nhu cầu 0–25 · Phân khúc 0–20 · Khả năng liên hệ 0–15 · Độ mới dữ liệu 0–10. Lưu cấu hình → tự tăng `ruleVersion`; mọi LeadScore lưu kèm phiên bản quy tắc.
 - **Phân hạng:** Ưu tiên cao (≥70) · Cần xác minh (≥45 hoặc tin cậy thấp) · Ưu tiên thấp (≥20) · Không phù hợp. Mỗi hạng kèm lý do hiển thị.
@@ -133,7 +169,7 @@ Chính sách tuyệt đối: không thu thập khi `robots.txt` cấm (`Disallow
 - **Coverage Dashboard:** theo nguồn/tỉnh/ngành/sản phẩm; tỷ lệ trùng/lỗi/chưa xác minh; phát hiện khoảng trống kèm đề xuất.
 - **Không tạo tỷ lệ giả:** % bao phủ thị trường chỉ tính cho phân khúc khai báo `estimatedTotal` kèm `denominatorSource` được tài liệu hóa; nếu không → hiển thị **"Chưa xác định mẫu số bao phủ"**.
 
-## 10. Quy trình tiếp cận Zalo (thủ công bắt buộc)
+## 11. Quy trình tiếp cận Zalo (thủ công bắt buộc)
 
 1. Lead Explorer → mở lead → **Tạo bản nháp** (chọn mẫu theo sản phẩm).
 2. Hệ thống render từ dữ liệu thực; **biến thiếu được cảnh báo, không tự điền**.
@@ -144,39 +180,40 @@ Chính sách tuyệt đối: không thu thập khi `robots.txt` cấm (`Disallow
 
 Hệ thống **không** có: API gửi tin, tự kết bạn, đọc cookie/token/session Zalo, mô phỏng thao tác. Trạng thái `CONTACTED` chỉ tồn tại khi bạn bấm xác nhận. Lead nằm trong **Danh sách loại trừ** (Settings) không thể tạo draft/task.
 
-## 11. Kiểm thử
+## 12. Kiểm thử
 
 ```bash
 bun run lint             # ESLint
 bun run typecheck        # tsc --noEmit
-bun run test             # 61 unit tests (normalization, dedup, scoring, templates, connector, csv, policy)
+bun run test             # 83 unit tests (normalization, dedup, scoring, templates, connector, csv, policy, discovery, scheduler)
 bun run test:integration # 27 asserts E2E (DB riêng tests/db test-int.db)
 bun run test:all         # cả hai
 ```
 
-Ma trận kiểm thử theo spec: **A** chuẩn hóa+khử trùng lặp · **B** connector (robots, retry, policy, không mạng thật) · **C** chấm điểm (biên, giải thích, versioning) · **D** coverage (không tạo % giả) · **E** outreach (template, suppression, quét tĩnh chống auto-send) · **F** audit/sanitize · **G** E2E pipeline.
+Ma trận kiểm thử theo spec: **A** chuẩn hóa+khử trùng lặp · **B** connector (robots, retry, policy, không mạng thật) · **C** chấm điểm (biên, giải thích, versioning) · **D** coverage (không tạo % giả) · **E** outreach (template, suppression, quét tĩnh chống auto-send) · **F** audit/sanitize · **G** E2E pipeline · **Discovery** dò nguồn (fetch inject, không giả định cho phép) · **Scheduler** giờ/múi giờ/chống bắn 2 lần.
 
-## 12. Giới hạn & phụ thuộc bên ngoài (trung thực)
+## 13. Giới hạn & phụ thuộc bên ngoài (trung thực)
 
-- **Chưa tích hợp nguồn bên ngoài nào**: connector webpage có robots-check thật nhưng MVP chưa kèm parser cấu trúc cho danh bạ cụ thể — job sẽ ghi "chưa khai báo bộ phân tích" thay vì bịa dữ liệu. Khi có nguồn được phép, viết parser trong `src/server/sources/`.
+- **Chưa tích hợp nguồn bên ngoài nào**: connector webpage có robots-check thật nhưng MVP chưa kèm parser cấu trúc cho danh bạ cụ thể — job sẽ ghi "chưa khai báo bộ phân tích" thay vì bịa dữ liệu. Dò nguồn đã phát hiện thật: nhiều danh bạ phổ biến trả HTTP 403 cho robots.txt (chống bot) → bị ghi nhận trung thực là "cần xem xét thủ công", không né. Khi có nguồn được phép, viết parser trong `src/server/sources/`.
 - **Xác thực người dùng**: MVP single-operator; có token guard qua `CRM_API_TOKEN`; NextAuth có thể ghép sau (model `User` đã có).
 - **SQLite** phù hợp MVP; chuyển PostgreSQL chỉ cần đổi `provider` + chạy `db:push`.
-- **Chưa có worker tách biệt** — job chạy bất đồng bộ trong tiến trình app (đủ MVP); khi khối lượng lớn, tách theo kế hoạch modular monolith.
+- **Chưa có worker tách biệt** — job chạy bất đồng bộ trong tiến trình app và scheduler cũng chạy in-process (tick 60s); khi khối lượng lớn, tách worker + cron hệ thống theo kế hoạch modular monolith.
 - **Mô hình điểm** là ưu tiên ban đầu — cần kiểm chứng bằng kết quả sales thực tế; chưa có huấn luyện/tự học (chỉ lưu phản hồi + báo cáo).
 
-## 13. Backup, phục hồi, lưu giữ
+## 14. Backup, phục hồi, lưu giữ
 
 - SQLite: sao chép tệp `db/custom.db` (dừng ghi hoặc dùng `sqlite3 .backup`). Lịch đề xuất: hằng ngày, giữ 30 bản.
 - Phục hồi: thay tệp DB + khởi động lại app. Với PostgreSQL: `pg_dump`/`pg_restore`.
-- **Lưu giữ dữ liệu**: `Source.retentionDays` (mặc định 365) — khai báo theo từng nguồn; khi triển khai thật, cần cron dọn `SourceRecord` quá hạn (chưa bật trong MVP, ghi nhận rõ).
+- **Lưu giữ dữ liệu**: `Source.retentionDays` (mặc định 365) — khai báo theo từng nguồn; bật **retentionCleanup** trong Cài đặt → Tự động chạy để scheduler dọn `SourceRecord` quá hạn mỗi ngày.
 
-## 14. Thao tác cho quản trị viên
+## 15. Thao tác cho quản trị viên
 
 - **Cài đặt → Chấm điểm**: chỉnh trọng số (tổng phải = 100), ngưỡng hạng, tên người gửi; bấm **Chạy lại chấm điểm**.
 - **Cài đặt → Mẫu tin nhắn**: CRUD mẫu theo sản phẩm, dùng biến `{company_name} {business_sector} {product_name} {verified_business_context} {sender_name}`.
 - **Cài đặt → Danh sách loại trừ**: thêm MST/phone/email/domain → lead bị chặn khỏi hàng đợi.
 - **Cài đặt → Audit log**: theo dõi thao tác (đã sanitize, không chứa dữ liệu liên hệ).
-- **Nguồn dữ liệu**: duyệt chính sách truy cập trước khi bật; kiểm soát job.
+- **Cài đặt → Tự động chạy**: bật lịch hằng ngày, chọn giờ/múi giờ, bật/từng bước tự động (dò nguồn / chạy job / chấm điểm / dọn dữ liệu), xem lần chạy tới + kết quả gần nhất, chạy thử ngay.
+- **Nguồn dữ liệu**: duyệt chính sách truy cập trước khi bật; tự dò nguồn; kiểm soát job.
 - **Nạp dữ liệu demo**: nút ở Cài đặt (dữ liệu tổng hợp, có đuôi "(demo)", không phải khách hàng thật).
 
 ---
@@ -188,7 +225,9 @@ Ma trận kiểm thử theo spec: **A** chuẩn hóa+khử trùng lặp · **B**
 | Lead | `GET/POST /api/companies`, `GET/PATCH /api/companies/[id]`, `POST /api/score` |
 | Pipeline | `POST /api/import`, `GET /api/import` (tệp mẫu), `GET /api/export` |
 | Nguồn | `GET/POST /api/sources`, `PATCH /api/sources/[id]`, `POST /api/sources/[id]/check` |
+| Dò nguồn | `GET /api/discovery` (danh mục ứng viên), `POST /api/discovery` (dò + đăng ký, nguồn mới luôn tắt) |
 | Job | `GET/POST /api/jobs`, `POST /api/jobs/[id]` (pause/resume/cancel/retry) |
+| Scheduler | `GET /api/scheduler` (trạng thái + lần chạy tới), `PUT` (lưu cấu hình), `POST` (chạy ngay) |
 | Bao phủ | `GET /api/coverage` |
 | Tiếp cận | `GET/POST /api/outreach`, `POST /api/outreach/draft`, `GET/POST /api/outreach/events` |
 | Chiến dịch | `GET/POST /api/campaigns` |
