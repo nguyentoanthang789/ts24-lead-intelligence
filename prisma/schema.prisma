@@ -1,0 +1,366 @@
+// TS24 Lead Intelligence — Data Model
+// Portable schema: SQLite cho MVP sandbox. Chuyển PostgreSQL: đổi provider thành "postgresql".
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ============ HỒ SƠ DOANH NGHIỆP ============
+
+/// Hồ sơ doanh nghiệp thống nhất (unified profile) sau Identity Resolution
+model Company {
+  id                 String    @id @default(cuid())
+  name               String
+  /// Tên đã chuẩn hóa để so khớp (bỏ tiền tố pháp lý, bỏ dấu)
+  nameKey            String?
+  taxCode            String?
+  /// Trạng thái xác thực MST: UNVERIFIED | VERIFIED
+  taxCodeStatus      String    @default("UNVERIFIED")
+  province           String?
+  address            String?
+  website            String?
+  /// Tên miền đã chuẩn hóa để so khớp
+  domain             String?
+  /// Ngành nghề (chuẩn hóa keyword)
+  sector             String?
+  businessType       String?
+  /// ACTIVE | INACTIVE | UNKNOWN — chỉ set khi nguồn tin cậy cung cấp
+  businessStatus     String    @default("UNKNOWN")
+  /// Tín hiệu quy mô (text, chỉ khi nguồn xác thực — không tự suy luận)
+  sizeSignal         String?
+  establishedYear    Int?
+  verificationStatus String    @default("UNVERIFIED") // UNVERIFIED | PARTIALLY_VERIFIED | VERIFIED
+  priorityTier       String    @default("NEEDS_VERIFICATION") // HIGH | NEEDS_VERIFICATION | LOW | NOT_SUITABLE
+  /// Trạng thái tiếp cận: NEW | CONTENT_READY | AWAITING_CONTACT | CONTACTED | REPLIED | INTERESTED | FOLLOW_UP | CONVERTED | NOT_SUITABLE | DO_NOT_CONTACT
+  outreachStatus     String    @default("NEW")
+  internalNotes      String?
+  rawName            String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  lastVerifiedAt     DateTime?
+
+  contactPoints  ContactPoint[]
+  sourceRecords  SourceRecord[]
+  evidences      Evidence[]
+  productFits    ProductFit[]
+  leadScores     LeadScore[]
+  outreachTasks  OutreachTask[]
+  outreachEvents OutreachEvent[]
+
+  @@index([nameKey])
+  @@index([taxCode])
+  @@index([domain])
+  @@index([province])
+  @@index([sector])
+  @@index([priorityTier])
+  @@index([outreachStatus])
+  @@index([updatedAt])
+}
+
+/// Kênh liên hệ công việc CÔNG KHAI được phép sử dụng
+model ContactPoint {
+  id         String   @id @default(cuid())
+  companyId  String
+  company    Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  type       String // PHONE | EMAIL | WEBSITE | ZALO | OTHER
+  value      String
+  /// Giá trị đã chuẩn hóa (E.164-like cho phone, lowercase email)
+  normalized String
+  isPublic   Boolean  @default(true)
+  status     String   @default("UNVERIFIED") // VALID | INVALID | UNVERIFIED
+  createdAt  DateTime @default(now())
+
+  @@unique([companyId, type, normalized])
+  @@index([normalized])
+}
+
+// ============ NGUỒN DỮ LIỆU & THU THẬP ============
+
+/// Danh mục nguồn dữ liệu (Source Registry)
+model Source {
+  id             String    @id @default(cuid())
+  name           String    @unique
+  /// OFFICIAL_API | OFFICIAL_REGISTRY | COMPANY_WEBSITE | PUBLIC_DIRECTORY | USER_UPLOAD | MANUAL_ENTRY | FILE_IMPORT
+  type           String
+  url            String?
+  /// Phạm vi dữ liệu được phép thu thập (mô tả)
+  allowedScope   String?
+  /// ALLOWED | REVIEW_REQUIRED | DISALLOWED — không bật thu thập khi REVIEW_REQUIRED/DISALLOWED
+  accessPolicy   String    @default("REVIEW_REQUIRED")
+  /// robots.txt status nếu đã kiểm tra: OK | RESTRICTED | UNKNOWN | CHECK_FAILED
+  robotsStatus   String?
+  robotsNote     String?
+  rateLimitPerMin Int     @default(10)
+  dataRightsNote String?
+  retentionDays  Int       @default(365)
+  isActive       Boolean   @default(false)
+  needsReview    Boolean   @default(true)
+  lastRunAt      DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  sourceRecords   SourceRecord[]
+  collectionJobs  CollectionJob[]
+
+  @@index([type])
+}
+
+/// Bản ghi gốc từ mỗi nguồn — giữ nguyên payload để đối chiếu nguồn gốc
+model SourceRecord {
+  id          String    @id @default(cuid())
+  sourceId    String
+  source      Source    @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  companyId   String?
+  company     Company?  @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  externalId  String?
+  /// Payload gốc dạng JSON string
+  payload     String
+  /// PENDING | VALID | DUPLICATE | ERROR | NEEDS_REVIEW
+  status      String    @default("PENDING")
+  errorMessage String?
+  dedupKey    String?
+  collectedAt DateTime  @default(now())
+
+  @@index([sourceId, status])
+  @@index([dedupKey])
+  @@index([companyId])
+}
+
+/// Lần chạy thu thập
+model CollectionJob {
+  id           String    @id @default(cuid())
+  sourceId     String
+  source       Source    @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  /// PENDING | RUNNING | PAUSED | COMPLETED | FAILED | CANCELLED
+  status       String    @default("PENDING")
+  discoveredCount Int    @default(0)
+  validCount   Int       @default(0)
+  errorCount   Int       @default(0)
+  duplicateCount Int     @default(0)
+  checkpoint   String?
+  logText      String?
+  startedAt    DateTime?
+  finishedAt   DateTime?
+  createdAt    DateTime  @default(now())
+
+  checkpoints CollectionCheckpoint[]
+
+  @@index([sourceId, status])
+}
+
+/// Checkpoint để resume công việc thu thập
+model CollectionCheckpoint {
+  id        String   @id @default(cuid())
+  jobId     String
+  job       CollectionJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  cursor    String
+  note      String?
+  createdAt DateTime @default(now())
+}
+
+/// Bằng chứng hỗ trợ thông tin hoặc đánh giá lead
+model Evidence {
+  id          String   @id @default(cuid())
+  companyId   String
+  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  productCode String?
+  /// SECTOR | HIRING | BRANCHES | MULTI_DEPT | EXPANSION | ACCOUNTING_ACTIVITY | DIGITIZATION_SIGNAL | PROCESS_SIGNAL | E_SIGN_SIGNAL | PUBLIC_CONTACT | DOCUMENT | OTHER
+  kind        String
+  summary     String
+  sourceUrl   String?
+  sourceName  String?
+  recordedAt  DateTime @default(now())
+  /// LOW | MEDIUM | HIGH
+  confidence  String   @default("LOW")
+
+  @@index([companyId, kind])
+  @@index([productCode])
+}
+
+// ============ SẢN PHẨM & CHẤM ĐIỂM ============
+
+/// Danh mục sản phẩm TS24 (nhóm A–F) — quản trị được
+model Product {
+  id          String  @id @default(cuid())
+  code        String  @unique // A | B | C | D | E | F
+  name        String
+  description String?
+  isActive    Boolean @default(true)
+  sortOrder   Int     @default(0)
+}
+
+/// Điểm phù hợp và lý do cho từng sản phẩm
+model ProductFit {
+  id               String  @id @default(cuid())
+  companyId        String
+  company          Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  productCode      String
+  fitScore         Int     @default(0) // 0-100 cho từng sản phẩm
+  reasons          String  @default("[]") // JSON string[]
+  missingFields    String  @default("[]") // JSON string[]
+  needsVerification Boolean @default(false)
+  computedAt       DateTime @default(now())
+
+  @@unique([companyId, productCode])
+  @@index([productCode])
+}
+
+/// Kết quả chấm điểm tổng thể và phiên bản quy tắc
+model LeadScore {
+  id             String   @id @default(cuid())
+  companyId      String
+  company        Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  totalScore     Int      @default(0)
+  productFitScore Int     @default(0) // 0-30
+  evidenceScore  Int      @default(0) // 0-25
+  segmentScore   Int      @default(0) // 0-20
+  contactScore   Int      @default(0) // 0-15
+  freshnessScore Int      @default(0) // 0-10
+  ruleVersion    String
+  tier           String   @default("NEEDS_VERIFICATION")
+  /// JSON giải thích chi tiết từng thành phần điểm
+  explanation    String   @default("{}")
+  computedAt     DateTime @default(now())
+
+  @@index([companyId])
+  @@index([tier])
+}
+
+/// Phân khúc lead — có thể khai báo mẫu số bao phủ được tài liệu hóa
+model Segment {
+  id                String   @id @default(cuid())
+  name              String
+  province          String?
+  sector            String?
+  productCode       String?
+  /// Mẫu số ước tính — CHỈ khi có nguồn tài liệu hóa
+  estimatedTotal    Int?
+  /// Nguồn của mẫu số (văn bản trích dẫn) — bắt buộc khi có estimatedTotal
+  denominatorSource String?
+  documented        Boolean  @default(false)
+  notes             String?
+  createdAt         DateTime @default(now())
+
+  @@index([province, sector])
+}
+
+// ============ CHIẾN DỊCH & TIẾP CẬN (THỦ CÔNG) ============
+
+model Campaign {
+  id          String   @id @default(cuid())
+  name        String
+  productCode String?
+  /// DRAFT | ACTIVE | PAUSED | COMPLETED
+  status      String   @default("DRAFT")
+  goalNote    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  outreachTasks OutreachTask[]
+
+  @@index([status])
+}
+
+/// Công việc tiếp cận THỦ CÔNG — không tự gửi tin
+model OutreachTask {
+  id          String    @id @default(cuid())
+  companyId   String
+  company     Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  campaignId  String?
+  campaign    Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  /// NEW | CONTENT_READY | AWAITING_CONTACT | CONTACTED | REPLIED | INTERESTED | FOLLOW_UP | CONVERTED | NOT_SUITABLE | DO_NOT_CONTACT
+  status      String    @default("NEW")
+  /// Bản nháp cuối cùng người dùng duyệt
+  draftContent String?
+  templateId  String?
+  scheduledAt DateTime?
+  lastEventAt DateTime?
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([status])
+  @@index([companyId])
+  @@index([campaignId])
+}
+
+/// Mẫu nội dung theo sản phẩm — biến {company_name}, {business_sector}, {product_name}, {verified_business_context}, {sender_name}
+model MessageTemplate {
+  id          String   @id @default(cuid())
+  name        String
+  productCode String?
+  channel     String   @default("ZALO")
+  body        String
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+/// Sự kiện tương tác ĐÃ XÁC NHẬN bởi thao tác người dùng — không tự suy ra từ việc mở Zalo
+model OutreachEvent {
+  id        String   @id @default(cuid())
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  taskId    String?
+  /// DRAFT_CREATED | CONTENT_COPIED | ZALO_OPENED | MARKED_CONTACTED | REPLIED | INTERESTED | FOLLOW_UP | NOT_SUITABLE | CONVERTED | DO_NOT_CONTACT | NOTE_ADDED | RETURNED_TO_VERIFICATION
+  type      String
+  note      String?
+  actor     String   @default("operator")
+  occurredAt DateTime @default(now())
+
+  @@index([companyId])
+  @@index([taskId])
+}
+
+/// Danh sách loại trừ — lead trong danh sách này không vào được hàng đợi tiếp cận
+model SuppressionEntry {
+  id        String   @id @default(cuid())
+  /// Giá trị: mã số thuế / phone chuẩn hóa / email / domain / company id
+  value     String
+  /// GLOBAL | CAMPAIGN:<id>
+  scope     String   @default("GLOBAL")
+  reason    String?
+  createdAt DateTime @default(now())
+
+  @@unique([value, scope])
+  @@index([value])
+}
+
+/// Lịch sử thao tác quan trọng — không ghi dữ liệu liên hệ nhạy cảm
+model AuditEvent {
+  id         String   @id @default(cuid())
+  actor      String   @default("operator")
+  action     String
+  entityType String
+  entityId   String?
+  /// Chi tiết đã sanitize (không chứa contact values / secrets)
+  detail     String?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+/// Người dùng hệ thống (MVP: single-operator, không bật login)
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  /// ADMIN | OPERATOR
+  role      String   @default("OPERATOR")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// Cấu hình hệ thống: scoring config versioned, coverage denominators...
+model AppSetting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String // JSON string
+  updatedAt DateTime @updatedAt
+}

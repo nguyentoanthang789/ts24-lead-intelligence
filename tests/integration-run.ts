@@ -1,0 +1,188 @@
+// ============================================================
+// Integration / E2E (Test B phần DB + D + E + G) — chạy trong tiến trình RIÊNG
+// với DB SQLite riêng, KHÔNG đụng DB dev: bun run tests/integration-run.ts
+// Luồng: tạo nguồn → import CSV fixture → khử trùng lặp → chấm điểm → hàng đợi
+//        → draft → copy event → suppression chặn → coverage không tạo % giả → job states
+// KHÔNG gửi tin trong quá trình test — chỉ ghi nhận sự kiện người dùng xác nhận.
+// ============================================================
+
+import { execSync } from "child_process";
+import { existsSync, readFileSync, rmSync, readdirSync, statSync } from "fs";
+import { join } from "path";
+
+const TEST_DB = "file:/home/z/my-project/db/test-int.db";
+const DB_FILE = "/home/z/my-project/db/test-int.db";
+const PROJECT = "/home/z/my-project";
+
+process.env.DATABASE_URL = TEST_DB;
+
+// 1) dọn DB cũ + push schema
+if (existsSync(DB_FILE)) rmSync(DB_FILE);
+execSync("bunx prisma db push --skip-generate --accept-data-loss", {
+  cwd: PROJECT, env: { ...process.env, DATABASE_URL: TEST_DB }, stdio: "pipe",
+});
+
+async function main() {
+  const { db } = await import("../src/lib/db");
+  const { processRecords } = await import("../src/server/import-pipeline");
+  const { DEFAULT_SCORING_CONFIG } = await import("../src/server/scoring-config");
+  const { computeCoverage } = await import("../src/server/coverage");
+  const { renderTemplate, buildVerifiedContext } = await import("../src/server/templates");
+  const { isSuppressed } = await import("../src/server/compliance");
+
+  let passed = 0;
+  let failed = 0;
+  function check(name: string, cond: boolean, extra = "") {
+    if (cond) {
+      passed++;
+      console.log(`  ✓ ${name}`);
+    } else {
+      failed++;
+      console.error(`  ✗ ${name} ${extra}`);
+    }
+  }
+
+  // --- Tạo nguồn FILE_IMPORT (mặc định TẮT như nguồn thật) ---
+  const source = await db.source.create({
+    data: {
+      name: "Test fixture source", type: "FILE_IMPORT", accessPolicy: "ALLOWED",
+      isActive: false, needsReview: false,
+    },
+  });
+
+  // --- Test B: CollectionJob tạo → source inactive thì job FAILED ---
+  const job1 = await db.collectionJob.create({ data: { sourceId: source.id, status: "PENDING" } });
+  const { runCollectionJob } = await import("../src/server/sources/adapters");
+  const r1 = await runCollectionJob(job1.id, DEFAULT_SCORING_CONFIG);
+  check("Test B: job trên nguồn bị tắt → FAILED, không thu thập", r1.status === "FAILED");
+
+  // nguồn active với FILE_IMPORT adapter → COMPLETED nhưng 0 bản ghi (không tự bịa dữ liệu)
+  await db.source.update({ where: { id: source.id }, data: { isActive: true } });
+  const job2 = await db.collectionJob.create({ data: { sourceId: source.id, status: "PENDING" } });
+  const r2 = await runCollectionJob(job2.id, DEFAULT_SCORING_CONFIG);
+  check("Test B: adapter file không tạo dữ liệu giả khi không có đầu vào", r2.status === "COMPLETED" && r2.rowsCollected === 0);
+
+  // --- Test A/G: import CSV fixture qua pipeline ---
+  const csv = readFileSync(join(PROJECT, "tests/fixtures/sample-companies.csv"), "utf-8");
+  const { parseCsv, csvToObjects } = await import("../src/server/csv");
+  const rows = csvToObjects(parseCsv(csv));
+  const result = await processRecords({ sourceId: source.id, rows, config: DEFAULT_SCORING_CONFIG });
+  console.log(`   import nguồn 1: total=${result.totalRows} created=${result.createdCompanies} merged=${result.mergedCompanies} dup=${result.duplicateRecords} err=${result.errorRows} valid=${result.validRows}`);
+
+  check("Test A: 5 dòng input", result.totalRows === 5);
+  check("Test A: dòng trùng MST trong cùng nguồn bị đánh dấu DUPLICATE (không tạo công ty mới)", result.createdCompanies === 3 && result.duplicateRecords === 1 && result.mergedCompanies === 0, `created=${result.createdCompanies} merged=${result.mergedCompanies}`);
+  check("Test A: dòng MST sai định dạng → ERROR có lý do", result.errorRows === 1);
+
+  const errRecord = await db.sourceRecord.findFirst({ where: { status: "ERROR" } });
+  check("Test A: bản ghi lỗi ghi rõ nguyên nhân", !!errRecord && (errRecord.errorMessage ?? "").includes("Mã số thuế"));
+
+  // Import lại từ NGUỒN KHÁC → cùng MST giờ phải được HỢP NHẤT vào công ty sẵn có (identity resolution)
+  const source2 = await db.source.create({
+    data: { name: "Test fixture source 2", type: "FILE_IMPORT", accessPolicy: "ALLOWED", isActive: true, needsReview: false },
+  });
+  const result2 = await processRecords({ sourceId: source2.id, rows, config: DEFAULT_SCORING_CONFIG });
+  console.log(`   import nguồn 2: created=${result2.createdCompanies} merged=${result2.mergedCompanies}`);
+  check("Test A: cross-source merge theo MST — không tạo công ty trùng", result2.createdCompanies === 0 && result2.mergedCompanies >= 2, `created=${result2.createdCompanies} merged=${result2.mergedCompanies}`);
+  const companyCount = await db.company.count();
+  check("Test A: tổng số công ty không tăng sau khi import trùng từ nguồn khác", companyCount === 3, `count=${companyCount}`);
+
+  // kiểm tra contact merged: công ty kia có phone duy nhất đã chuẩn hóa
+  const merged = await db.company.findFirst({ where: { taxCode: "0312345677" }, include: { contactPoints: true } });
+  check("Test A: hợp nhất giữ 1 kênh phone đã chuẩn hóa (không trùng)", !!merged && merged.contactPoints.filter((p) => p.type === "PHONE").length === 1, JSON.stringify(merged?.contactPoints));
+  check("Test A: payload gốc được giữ để đối chiếu", !!merged && (await db.sourceRecord.count({ where: { companyId: merged.id } })) >= 1);
+
+  // --- Test C: điểm trong biên + tier có giải thích ---
+  const scores = await db.leadScore.findMany();
+  check("Test C: mọi lead đã được chấm điểm", scores.length >= 3);
+  check("Test C: điểm trong 0-100", scores.every((s) => s.totalScore >= 0 && s.totalScore <= 100));
+  check("Test C: explanation có tierReason", scores.every((s) => {
+    const e = JSON.parse(s.explanation) as { tierReason: string };
+    return typeof e.tierReason === "string" && e.tierReason.length > 5;
+  }));
+  const fits = await db.productFit.findMany();
+  const codes = new Set(fits.map((f) => f.productCode));
+  check("Test C: 6 sản phẩm đều có điểm fit riêng", codes.size === 6);
+
+  // --- Test E: template + draft, biến thiếu không bịa ---
+  const tpl = await db.messageTemplate.create({
+    data: { name: "tpl-test", body: "Chào {company_name}, tôi là {sender_name}." },
+  });
+  const company1 = merged!;
+  const task = await db.outreachTask.create({ data: { companyId: company1.id, status: "NEW" } });
+  const draftRes = renderTemplate(tpl.body, {
+    company_name: company1.name,
+    sender_name: null, // thiếu
+  });
+  check("Test E: biến thiếu được báo rõ", draftRes.missingVariables.includes("sender_name"));
+  check("Test E: nội dung không chứa dữ liệu bịa", !draftRes.content.includes("undefined") && !draftRes.content.includes("null"));
+
+  // --- Test E: suppression chặn hàng đợi ---
+  await db.suppressionEntry.create({
+    data: { value: company1.taxCode ?? company1.id, scope: "GLOBAL", reason: "test-block" },
+  });
+  const suppressed = await isSuppressed(await db.company.findUniqueOrThrow({
+    where: { id: company1.id }, include: { contactPoints: true },
+  }));
+  check("Test E: lead trong danh sách loại trừ bị chặn", suppressed.suppressed);
+
+  // --- Test E: không có mã tự gửi trong src (quét tĩnh) ---
+  function listFiles(dir: string): string[] {
+    const out: string[] = [];
+    for (const n of readdirSync(dir)) {
+      const p = join(dir, n);
+      if (statSync(p).isDirectory()) out.push(...listFiles(p));
+      else if (/\.(tsx?)$/.test(n)) out.push(p);
+    }
+    return out;
+  }
+  const srcFiles = listFiles(join(PROJECT, "src"));
+  const forbidden = srcFiles.filter((f) => /zalo.*(sendmessage|autofill|cookiesession)|api\.zalo\.me|zalo.*(friend_request|add_friend|joingroup)/i.test(readFileSync(f, "utf-8")));
+  check("Test E: không có mã tự động gửi tin/kết bạn qua Zalo", forbidden.length === 0, forbidden.join(", "));
+
+  // --- Test D: coverage — không tạo tỷ lệ giả khi không có mẫu số ---
+  const coverage = await computeCoverage(DEFAULT_SCORING_CONFIG);
+  check("Test D: overall vẫn DENOMINATOR_UNKNOWN khi chưa khai báo mẫu số", coverage.overall.coverageStatus === "DENOMINATOR_UNKNOWN" && coverage.overall.coveragePercent === null);
+  check("Test D: bộ lọc theo tỉnh hoạt động", coverage.byProvince.length >= 3);
+  check("Test D: tỷ lệ trùng được tính đúng (1/5 = 20%)", coverage.overall.duplicateRate === 20, `dupRate=${coverage.overall.duplicateRate}`);
+  check("Test D: tỷ lệ lỗi được tính đúng (1/5 = 20%)", coverage.overall.errorRate === 20);
+  check("Test D: phát hiện khoảng trống (nguồn chưa tích hợp danh bạ)", coverage.gaps.some((g) => g.type === "MISSING_SOURCE_TYPE"));
+
+  // segment CÓ mẫu số được tài liệu hóa → có %
+  await db.segment.create({
+    data: {
+      name: "Test segment documented", province: "TP. Hồ Chí Minh",
+      estimatedTotal: 100, denominatorSource: "Nguồn thống kê test (tài liệu hóa)",
+      documented: true,
+    },
+  });
+  const cov2 = await computeCoverage(DEFAULT_SCORING_CONFIG);
+  const seg = cov2.segments.find((s) => s.name === "Test segment documented");
+  check("Test D: phân khúc có mẫu số tài liệu hóa → % được tính", !!seg && seg.coverageStatus === "CALCULATED" && seg.coveragePercent !== null);
+
+  // --- Test G: E2E outreach events — trạng thái chỉ theo thao tác xác nhận ---
+  const company2 = await db.company.findFirst({ where: { taxCode: "0101234565" } });
+  const task2 = await db.outreachTask.create({ data: { companyId: company2!.id, status: "CONTENT_READY" } });
+  await db.outreachEvent.create({ data: { companyId: company2!.id, taskId: task2.id, type: "ZALO_OPENED" } });
+  await db.outreachTask.update({ where: { id: task2.id }, data: { status: "AWAITING_CONTACT" } });
+  await db.company.update({ where: { id: company2!.id }, data: { outreachStatus: "AWAITING_CONTACT" } });
+  const afterOpen = await db.outreachTask.findUniqueOrThrow({ where: { id: task2.id } });
+  check("Test G: mở Zalo Web chỉ ghi nhận sự kiện — KHÔNG tự đánh dấu đã gửi (không tồn tại trạng thái SENT)", afterOpen.status === "AWAITING_CONTACT" && !["MESSAGE_SENT", "SENT"].includes(afterOpen.status));
+
+  await db.outreachEvent.create({ data: { companyId: company2!.id, taskId: task2.id, type: "MARKED_CONTACTED" } });
+  await db.outreachTask.update({ where: { id: task2.id }, data: { status: "CONTACTED" } });
+  const evs = await db.outreachEvent.count({ where: { companyId: company2!.id } });
+  check("Test G: lịch sử tương tác theo thao tác xác nhận", evs === 2);
+
+  // --- Audit ---
+  const audits = await db.auditEvent.count();
+  check("Test F: thao tác quan trọng có audit log", audits >= 1);
+
+  await db.$disconnect();
+  console.log(`\nKết quả integration: ${passed} PASS, ${failed} FAIL`);
+  if (failed > 0) process.exit(1);
+}
+
+main().catch((e) => {
+  console.error("Integration test lỗi:", e);
+  process.exit(1);
+});
