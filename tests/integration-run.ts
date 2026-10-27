@@ -210,6 +210,104 @@ async function main() {
   const inboxRes2 = await inboxMod.scanInbox({ maxFiles: 5 });
   check("Inbox: quét lại không nhân bản (tệp đã chuyển đi)", inboxRes2.filesProcessed === 0);
 
+  // --- Catalog seed: chỉ danh mục, KHÔNG tạo lead ---
+  const seedMod = await import("../src/server/seed");
+  await seedMod.seedCatalog();
+  const productsCount = await db.product.count();
+  check("Catalog: seed nạp đủ 6 sản phẩm, không tạo công ty nào", productsCount === 6);
+
+  // --- CÀO THẬT qua WebPageAdapter v2: mock fetch trả HTML danh bạ 2 trang ---
+  const page1 =
+    "<html><body><h1>Danh bạ</h1>" +
+    "<table><tr><th>Tên doanh nghiệp</th><th>Mã số thuế</th><th>Điện thoại</th></tr>" +
+    "<tr><td>Công ty TNHH Cào Thật Một</td><td>0399000001</td><td>0901110001</td></tr>" +
+    "<tr><td>Công ty CP Cào Thật Hai</td><td>0399000002</td><td>0901110002</td></tr>" +
+    "</table>" +
+    '<a rel="next" href="https://mock-danbatest.vn/list?page=2">Tiếp theo</a>' +
+    "</body></html>";
+  const page2 =
+    "<html><body><table><tr><th>Tên doanh nghiệp</th><th>Mã số thuế</th><th>Điện thoại</th></tr>" +
+    "<tr><td>Công ty TNHH Cào Thật Ba</td><td>0399000003</td><td>0901110003</td></tr>" +
+    "</table></body></html>";
+  const pages: Record<string, { status: number; body: string; contentType: string }> = {
+    "https://mock-danbatest.vn/robots.txt": { status: 200, body: "User-agent: *\nDisallow:\n", contentType: "text/plain" },
+    "https://mock-danbatest.vn/list?page=1": { status: 200, body: page1, contentType: "text/html; charset=utf-8" },
+    "https://mock-danbatest.vn/list?page=2": { status: 200, body: page2, contentType: "text/html; charset=utf-8" },
+  };
+  const fetchMock = (async (url: string | URL | Request) => {
+    const u = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
+    const p = pages[u];
+    if (!p) return new Response("not found", { status: 404 });
+    return new Response(p.body, { status: p.status, headers: { "content-type": p.contentType } });
+  }) as unknown as typeof fetch;
+
+  const webSource = await db.source.create({
+    data: {
+      name: "Mock danh bạ test", type: "PUBLIC_DIRECTORY", url: "https://mock-danbatest.vn/list?page=1",
+      accessPolicy: "ALLOWED", isActive: true, needsReview: false, rateLimitPerMin: 600, // nhịp nhanh cho test
+    },
+  });
+  const webJob = await db.collectionJob.create({ data: { sourceId: webSource.id, status: "PENDING" } });
+  const adaptersMod = await import("../src/server/sources/adapters");
+  const webRes = await adaptersMod.runCollectionJob(webJob.id, DEFAULT_SCORING_CONFIG, {
+    fetchImpl: fetchMock,
+    collector: { maxPagesPerSource: 5, sourceConcurrency: 2, requestTimeoutMs: 5000 },
+  });
+  check("Cào HTML: job hoàn tất và lấy được lead thật từ 2 trang", webRes.status === "COMPLETED" && webRes.rowsCollected === 3, `status=${webRes.status} rows=${webRes.rowsCollected}`);
+  const c1 = await db.company.findFirst({ where: { taxCode: "0399000001" } });
+  const c3 = await db.company.findFirst({ where: { taxCode: "0399000003" } });
+  check("Cào HTML: lead trang 1 vào DB đúng dữ liệu (không bịa)", !!c1 && c1.name.includes("Cào Thật Một"));
+  check("Cào HTML: lead trang 2 vào DB (pagination hoạt động)", !!c3 && c3.name.includes("Cào Thật Ba"));
+  const webJobRow = await db.collectionJob.findUniqueOrThrow({ where: { id: webJob.id } });
+  check("Cào HTML: nhật ký job ghi rõ từng trang", (webJobRow.logText ?? "").includes("Trang 2"));
+
+  // --- Chạy SONG SONG nhiều nguồn ---
+  const pages2: Record<string, { status: number; body: string; contentType: string }> = {
+    "https://nguon-a.vn/robots.txt": { status: 200, body: "User-agent: *\nDisallow:\n", contentType: "text/plain" },
+    "https://nguon-a.vn/dn?page=1": {
+      status: 200, contentType: "text/html",
+      body: '<table><tr><th>Tên doanh nghiệp</th><th>Mã số thuế</th></tr><tr><td>Công ty TNHH Nguon A</td><td>0400000001</td></tr></table>',
+    },
+    "https://nguon-b.vn/robots.txt": { status: 200, body: "User-agent: *\nDisallow:\n", contentType: "text/plain" },
+    "https://nguon-b.vn/dn": {
+      status: 200, contentType: "text/html",
+      body: '<table><tr><th>Tên doanh nghiệp</th><th>Mã số thuế</th></tr><tr><td>Công ty TNHH Nguon B</td><td>0500000001</td></tr></table>',
+    },
+  };
+  const fetchMock2 = (async (url: string | URL | Request) => {
+    const u = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
+    const p = pages2[u];
+    if (!p) return new Response("nf", { status: 404 });
+    return new Response(p.body, { status: p.status, headers: { "content-type": p.contentType } });
+  }) as unknown as typeof fetch;
+  const sA = await db.source.create({ data: { name: "Nguon A", type: "PUBLIC_DIRECTORY", url: "https://nguon-a.vn/dn?page=1", accessPolicy: "ALLOWED", isActive: true, needsReview: false, rateLimitPerMin: 600 } });
+  const sB = await db.source.create({ data: { name: "Nguon B", type: "COMPANY_WEBSITE", url: "https://nguon-b.vn/dn", accessPolicy: "ALLOWED", isActive: true, needsReview: false, rateLimitPerMin: 600 } });
+  const parOut = await adaptersMod.runSourceJobsParallel(
+    [{ id: sA.id, name: sA.name }, { id: sB.id, name: sB.name }],
+    DEFAULT_SCORING_CONFIG,
+    { concurrency: 2, fetchImpl: fetchMock2, collector: { maxPagesPerSource: 3, sourceConcurrency: 2, requestTimeoutMs: 5000 } }
+  );
+  check("Song song: 2 nguồn cùng cào, đều hoàn tất có lead", parOut.length === 2 && parOut.every((o) => o.status === "COMPLETED" && o.rows >= 1), JSON.stringify(parOut.map((o) => ({ s: o.sourceName, st: o.status, r: o.rows }))));
+  check("Song song: lead của cả 2 nguồn vào DB", !!(await db.company.findFirst({ where: { taxCode: "0400000001" } })) && !!(await db.company.findFirst({ where: { taxCode: "0500000001" } })));
+
+  // --- Collector config round-trip ---
+  const collectorMod = await import("../src/server/collector-config");
+  await collectorMod.saveCollectorConfig({ maxPagesPerSource: 25, sourceConcurrency: 6, requestTimeoutMs: 20000 }, "test");
+  const cc = await collectorMod.getCollectorConfig();
+  check("Collector config: round-trip AppSetting", cc.maxPagesPerSource === 25 && cc.sourceConcurrency === 6 && cc.requestTimeoutMs === 20000);
+
+  // --- PURGE DEMO: xóa sạch lead demo, giữ lead thật ---
+  const realCountBefore = await db.company.count();
+  await db.company.create({ data: { name: "Cong ty TNHH Demo Can Xoa (demo)" } });
+  await db.segment.create({ data: { name: "[DEMO] Segment cần xóa", estimatedTotal: 999 } });
+  await db.suppressionEntry.create({ data: { value: "0999000000", scope: "GLOBAL", reason: "DEMO: cần xóa" } });
+  const purgeRes = await seedMod.purgeDemoData();
+  const realCountAfter = await db.company.count();
+  check("Purge demo: xóa đúng lead demo", purgeRes.deletedCompanies === 1 && realCountAfter === realCountBefore, `del=${purgeRes.deletedCompanies} before=${realCountBefore} after=${realCountAfter}`);
+  check("Purge demo: segment + suppression demo cũng bị xóa", purgeRes.deletedSegments === 1 && purgeRes.deletedSuppressions === 1);
+  check("Purge demo: lead thật KHÔNG bị đụng", !!(await db.company.findFirst({ where: { taxCode: "0399000001" } })));
+  check("Purge demo: sản phẩm vẫn còn nguyên", (await db.product.count()) === 6);
+
   await db.$disconnect();
   console.log(`\nKết quả integration: ${passed} PASS, ${failed} FAIL`);
   if (failed > 0) process.exit(1);

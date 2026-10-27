@@ -16,6 +16,7 @@ import { Database, Plus, RefreshCw, Trash2, AlarmClock } from "lucide-react";
 import { toast } from "sonner";
 import { api, fmtDate, PRODUCT_NAMES } from "@/lib/crm-api";
 import { ContinuousRunnerCard } from "@/components/crm/continuous-runner";
+import { CollectorSpeedCard } from "@/components/crm/collector-speed-card";
 
 type Settings = {
   config: {
@@ -101,11 +102,15 @@ export function SettingsView() {
     }
   }
 
-  async function seedDemo() {
+  async function purgeDemo() {
+    if (!confirm("Xóa TOÀN BỘ lead demo (tên chứa \"(demo)\")? Lead thật không bị ảnh hưởng.")) return;
     setBusy(true);
     try {
-      await api("/api/admin/seed", { method: "POST", body: JSON.stringify({}) });
-      toast.success("Đã nạp dữ liệu demo tổng hợp");
+      const r = await api<{ deletedCompanies: number; deletedSegments: number; deletedSuppressions: number; message: string }>(
+        "/api/admin/purge-demo", { method: "POST", body: JSON.stringify({}) }
+      );
+      toast.success(`${r.message} — ${r.deletedCompanies} lead demo đã xóa`);
+      window.location.reload();
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -164,7 +169,7 @@ export function SettingsView() {
         <div className="flex flex-wrap gap-2">
           <Button onClick={saveConfig} disabled={busy || weightSum !== 100}>Lưu cấu hình</Button>
           <Button variant="outline" onClick={rescoreAll} disabled={busy}><RefreshCw className="h-4 w-4 mr-1" /> Chạy lại chấm điểm</Button>
-          <Button variant="outline" onClick={seedDemo} disabled={busy}><Database className="h-4 w-4 mr-1" /> Nạp dữ liệu demo</Button>
+          <Button variant="outline" className="text-red-600 hover:text-red-700" onClick={purgeDemo} disabled={busy}><Database className="h-4 w-4 mr-1" /> Xóa toàn bộ lead demo</Button>
         </div>
         {settings && (
           <Alert>
@@ -178,6 +183,7 @@ export function SettingsView() {
 
       <TabsContent value="autorun" className="space-y-4">
         <ContinuousRunnerCard />
+        <CollectorSpeedCard />
         <AutoRunPanel />
       </TabsContent>
 

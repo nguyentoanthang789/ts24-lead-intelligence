@@ -34,7 +34,9 @@ Hệ thống tìm kiếm, đánh giá và quản lý khách hàng tiềm năng c
 │  ─ templates       render mẫu tin (không bịa biến thiếu)        │
 │  ─ compliance      audit log (sanitized) + suppression          │
 │  ─ settings        đọc/lưu cấu hình versioned                   │
-│  ─ seed            dữ liệu demo tổng hợp                        │
+│  ─ seed            catalog seed (sản phẩm/mẫu/nguồn) + purge demo │
+│  ─ extract         trích DN thật từ HTML/JSON nguồn công khai   │
+│  ─ collector-config tốc độ cào: số trang / song song / timeout  │
 └───────────────┬─────────────────────────────────────────────────┘
                 │ Prisma ORM
 ┌───────────────▼─────────────────────────────────────────────────┐
@@ -54,19 +56,25 @@ Hệ thống tìm kiếm, đánh giá và quản lý khách hàng tiềm năng c
 src/
   app/
     page.tsx                 # SPA shell — sidebar điều hướng 6 view
-    api/                     # 22 route handlers (xem mục API)
+    api/                     # 25 route handlers (xem mục API)
   components/crm/            # view components + badges + lead detail
   lib/crm-api.ts             # client fetcher + nhãn tiếng Việt
   server/
     normalization.ts  dedup.ts  import-pipeline.ts  csv.ts
     scoring-config.ts matching.ts scoring.ts coverage.ts
     templates.ts compliance.ts settings.ts http.ts seed.ts
-    sources/adapters.ts      # Collector Engine
+    extract.ts               # trích xuất doanh nghiệp thật từ HTML/JSON
+    collector-config.ts      # cấu hình tốc độ thu thập + pool song song
+    sources/adapters.ts      # Collector Engine (cào đa trang, robots-aware)
     discovery.ts             # Source Discovery — tự dò ứng viên nguồn
     scheduler.ts             # Auto-Run Scheduler — tự chạy theo lịch
-  instrumentation.ts         # khởi động scheduler khi server bật
+    continuous.ts            # Continuous Runner — chạy liên tục không nghỉ
+    inbox.ts                 # Auto-Import Inbox — nhập tệp tự động
+  instrumentation.ts         # khởi động scheduler + continuous khi server bật
 prisma/schema.prisma         # 18 model (SQLite, portable sang PostgreSQL)
-scripts/seed.ts              # nạp dữ liệu demo
+scripts/seed.ts              # nạp catalog cấu hình (KHÔNG tạo lead giả)
+scripts/purge-demo.ts        # xóa sạch lead demo còn sót (chạy 1 lần)
+scripts/benchmark-throughput.ts # đo thông lượng lead/giây
 tests/unit/*.test.ts         # unit tests (bun test)
 tests/integration-run.ts     # E2E pipeline (DB riêng)
 tests/fixtures/*.csv         # fixture import
@@ -95,7 +103,7 @@ Không có biến môi trường nào cho Zalo — hệ thống **chủ động 
 bun install
 # SQLite (mặc định):
 bun run db:push          # tạo bảng theo schema (không cần migrate files)
-bun run seed             # nạp dữ liệu demo tổng hợp + 6 sản phẩm + 3 mẫu tin
+bun run seed             # nạp catalog cấu hình: 6 sản phẩm + 3 mẫu tin + nguồn gốc (KHÔNG tạo lead giả)
 # PostgreSQL: đổi provider trong prisma/schema.prisma thành "postgresql"
 # rồi chạy lại bun run db:push
 ```
@@ -192,6 +200,25 @@ Phần lớn danh bạ/doanh nghiệp VN **chủ động chặn bot** (HTTP 403,
 
 Giới hạn an toàn: mỗi tệp tối đa 10MB / 5000 dòng (đồng bộ import upload); tệp khác đuôi `.csv/.xlsx/.xls` bị bỏ qua.
 
+## 9.3. Cào tối đa lead thật (Extractor + đa trang + song song)
+
+Từ bản này, Collector Engine **cào được lead thật** thay vì chỉ ghi nhận nguồn:
+
+1. **Bộ trích xuất chung** (`src/server/extract.ts`): đọc bảng HTML danh bạ (map header tiếng Việt qua alias — "Tên doanh nghiệp/Mã số thuế/Điện thoại..."), không có bảng thì quét khối văn bản theo dấu hiệu DN VN (công ty/tnhh/cổ phần...) + MST theo ngữ cảnh/phone/email; hỗ trợ cả **JSON API** (`OFFICIAL_API` trả JSON → map key qua alias). Chỉ lấy dữ liệu HIỂN THỊ công khai — không bịa khi không parse được.
+2. **Cào đa trang (pagination)**: theo link trang kế (`rel="next"`, chữ "Tiếp/Trang sau/»", `?page=N`, `/page/N`) — tối đa `maxPagesPerSource` trang mỗi lần chạy nguồn (mặc định 10, tối đa 100), cùng host, chống lặp nội dung, checkpoint từng trang.
+3. **Chạy song song nhiều nguồn**: mỗi vòng pipeline chạy đồng thời `sourceConcurrency` nguồn (mặc định 4, tối đa 8) — mỗi nguồn vẫn giữ nhịp `rateLimitPerMin` của chính nó. Cấu hình tại **Cài đặt → Tự động chạy → Tốc độ thu thập** (API `GET/PUT /api/collector`).
+4. **Không phá vỡ đường viền tuân thủ**: vẫn kiểm robots.txt trước mỗi job, dừng an toàn khi nguồn 401/403/429, KHÔNG né CAPTCHA/chống bot — tăng tốc bằng cách khai thác HẾT những gì nguồn cho phép.
+
+**Bot 1 giây cào được tối đa bao nhiêu lead?** Hai mặt của con số (đo thật trên máy bằng `bun run scripts/benchmark-throughput.ts`):
+
+| Mặt | Con số | Ghi chú |
+|---|---|---|
+| Xử lý thuần (chuẩn hóa + khử trùng lặp + chấm điểm) | **~63.000 lead/giây** | không kẹt DB — giới hạn thực tế là mạng |
+| Pipeline đầy đủ + lưu SQLite (batch write + WAL) | **~580 lead/giây** | tối ưu từ 75 → 580 bằng ghi batch |
+| Mạng — trần hợp pháp | `nguồn × rateLimit/60 × lead/trang` | VD: 8 nguồn × 60 req/phút × 30 lead/trang ≈ **~240 lead/giây** nếu nguồn cho phép |
+
+Nghĩa là với nguồn danh bạ thông thường, **nút thắt là tốc độ nguồn cho phép (robots.txt + rate limit), không phải bot** — bot xử lý thoải mái gấp cả nghìn lần tốc độ nguồn cho phép. Muốn nhiều lead hơn: bật càng nhiều nguồn đã duyệt càng tốt + tăng `maxPagesPerSource`/`sourceConcurrency`, hoặc dùng kênh inbox (5.000 dòng/tệp, nhập liên tục — ~580 lead/giây).
+
 ## 10. Chấm điểm & xem độ bao phủ
 
 - **Thang điểm 0–100** (cấu hình tại Cài đặt): Phù hợp sản phẩm 0–30 · Bằng chứng nhu cầu 0–25 · Phân khúc 0–20 · Khả năng liên hệ 0–15 · Độ mới dữ liệu 0–10. Lưu cấu hình → tự tăng `ruleVersion`; mọi LeadScore lưu kèm phiên bản quy tắc.
@@ -243,9 +270,9 @@ Ma trận kiểm thử theo spec: **A** chuẩn hóa+khử trùng lặp · **B**
 - **Cài đặt → Mẫu tin nhắn**: CRUD mẫu theo sản phẩm, dùng biến `{company_name} {business_sector} {product_name} {verified_business_context} {sender_name}`.
 - **Cài đặt → Danh sách loại trừ**: thêm MST/phone/email/domain → lead bị chặn khỏi hàng đợi.
 - **Cài đặt → Audit log**: theo dõi thao tác (đã sanitize, không chứa dữ liệu liên hệ).
-- **Cài đặt → Tự động chạy**: bật lịch hằng ngày, chọn giờ/múi giờ, bật/từng bước tự động (dò nguồn / chạy job / chấm điểm / dọn dữ liệu), xem lần chạy tới + kết quả gần nhất, chạy thử ngay.
+- **Cài đặt → Tự động chạy**: bật lịch hằng ngày, chọn giờ/múi giờ, bật/từng bước tự động (dò nguồn / chạy job / chấm điểm / dọn dữ liệu), xem lần chạy tới + kết quả gần nhất, chạy thử ngay; card **Tốc độ thu thập** (số trang đi sâu mỗi nguồn 1–100, số nguồn chạy song song 1–8, timeout request).
 - **Nguồn dữ liệu**: duyệt chính sách truy cập trước khi bật; tự dò nguồn; kiểm soát job.
-- **Nạp dữ liệu demo**: nút ở Cài đặt (dữ liệu tổng hợp, có đuôi "(demo)", không phải khách hàng thật).
+- **Xóa toàn bộ lead demo**: nút ở Cài đặt (màu đỏ) — xóa sạch lead có đuôi "(demo)" + segment/suppression demo còn sót từ phiên bản cũ; lead thật không bị đụng (API: `POST /api/admin/purge-demo`). Hệ thống CHỈ làm việc với lead thật.
 
 ---
 
@@ -266,6 +293,6 @@ Ma trận kiểm thử theo spec: **A** chuẩn hóa+khử trùng lặp · **B**
 | Chiến dịch | `GET/POST /api/campaigns` |
 | Mẫu tin | `GET/POST /api/templates`, `PATCH/DELETE /api/templates/[id]` |
 | Tuân thủ | `GET/POST/DELETE /api/suppression`, `GET /api/audit` |
-| Hệ thống | `GET/PUT /api/settings`, `POST /api/admin/seed`, `GET /api/overview` |
+| Hệ thống | `GET/PUT /api/settings`, `POST /api/admin/purge-demo` (xóa lead demo), `GET/PUT /api/collector` (tốc độ cào), `GET /api/overview` |
 
 Lỗi trả về thống nhất: `{ ok: false, error: { code, message } }`.

@@ -11,9 +11,10 @@ import { db } from "@/lib/db";
 import { audit } from "./compliance";
 import { getScoringConfig } from "./settings";
 import { rescoreCompanies } from "./import-pipeline";
-import { runCollectionJob } from "./sources/adapters";
+import { runSourceJobsParallel } from "./sources/adapters";
 import { probeAndRegister } from "./discovery";
 import { scanInbox } from "./inbox";
+import { getCollectorConfig } from "./collector-config";
 
 export type SchedulerConfig = {
   enabled: boolean;
@@ -259,23 +260,32 @@ export async function runPipelineSteps(stepsCfg: PipelineSteps, trigger: Pipelin
       steps.push(`dò nguồn: ${probed.length} ứng viên, thêm mới ${probed.filter((p) => p.registered).length}`);
     }
 
-    // 2) Chạy job cho các nguồn MẠNG đang bật (bỏ qua nguồn file/upload — không có gì để thu)
+    // 2) Chạy SONG SONG job cho các nguồn MẠNG đang bật (bỏ qua nguồn file/upload)
+    //    — mỗi nguồn tự giữ nhịp rateLimitPerMin của chính nó; tăng tốc bằng
+    //    concurrency giữa các nguồn + đi sâu tối đa maxPagesPerSource mỗi nguồn.
     if (stepsCfg.autoRunSources) {
       const networkTypes = ["COMPANY_WEBSITE", "PUBLIC_DIRECTORY", "OFFICIAL_API", "OFFICIAL_REGISTRY"];
       const sources = await db.source.findMany({
         where: { isActive: true, type: { in: networkTypes } },
         select: { id: true, name: true },
       });
-      const config = await getScoringConfig();
-      let okJobs = 0;
-      let failJobs = 0;
-      for (const s of sources) {
-        const job = await db.collectionJob.create({ data: { sourceId: s.id, status: "PENDING" } });
-        const res = await runCollectionJob(job.id, config);
-        if (res.status === "COMPLETED") okJobs++;
-        else failJobs++;
+      if (sources.length > 0) {
+        const config = await getScoringConfig();
+        const collector = await getCollectorConfig();
+        const outcomes = await runSourceJobsParallel(sources, config, {
+          concurrency: collector.sourceConcurrency,
+          collector,
+        });
+        const okJobs = outcomes.filter((o) => o.status === "COMPLETED").length;
+        const failJobs = outcomes.filter((o) => o.status !== "COMPLETED").length;
+        const totalRows = outcomes.reduce((sum, o) => sum + o.rows, 0);
+        steps.push(
+          `job thu thập: ${okJobs} hoàn tất, ${failJobs} lỗi, ${totalRows} bản ghi` +
+          ` (song song ${collector.sourceConcurrency} nguồn × tối đa ${collector.maxPagesPerSource} trang, trên ${sources.length} nguồn đang bật)`
+        );
+      } else {
+        steps.push("job thu thập: bỏ qua — chưa có nguồn mạng nào đang bật");
       }
-      steps.push(`job thu thập: ${okJobs} hoàn tất, ${failJobs} lỗi (trên ${sources.length} nguồn mạng đang bật)`);
     }
 
     // 3) Nhập tự động hộp thư inbox — kênh tự động LUÔN cho lead mới từ tệp người vận hành thả vào

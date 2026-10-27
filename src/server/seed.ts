@@ -1,11 +1,12 @@
 // ============================================================
-// Seed dữ liệu DEMO — toàn bộ là dữ liệu tổng hợp (synthetic), KHÔNG phải khách hàng thật
-// Chạy qua pipeline chuẩn (normalize + dedup + score) để demo đúng luồng nghiệp vụ
+// Catalog seed — CHỈ nạp danh mục cấu hình (sản phẩm, mẫu tin nhắn, nguồn)
+// KHÔNG TẠO LEAD GIẢ. Toàn bộ lead demo đã bị loại bỏ theo yêu cầu:
+// hệ thống chỉ làm việc với lead THẬT từ nguồn thật/tệp người vận hành.
+// Gồm cả purgeDemoData() để xóa sạch lead demo còn sót lại từ phiên bản cũ.
 // ============================================================
 
 import { db } from "@/lib/db";
-import { processRecords, rescoreCompanies } from "./import-pipeline";
-import { DEFAULT_SCORING_CONFIG, ScoringConfig } from "./scoring-config";
+import { audit } from "./compliance";
 
 export const PRODUCT_SEED = [
   { code: "A", name: "Hóa đơn điện tử", description: "Phát hành, xử lý hóa đơn điện tử cho bán hàng, dịch vụ, phân phối, bán lẻ, chuỗi cửa hàng.", sortOrder: 1 },
@@ -53,100 +54,78 @@ export const SOURCE_SEED = [
     needsReview: false,
     dataRightsNote: "Dữ liệu nhập nội bộ",
   },
-  {
-    name: "Danh bạ doanh nghiệp công khai (demo — cần xem xét)",
-    type: "PUBLIC_DIRECTORY",
-    url: "https://example.com/business-directory",
-    accessPolicy: "REVIEW_REQUIRED",
-    allowedScope: "Chưa xác định — cần kiểm tra điều khoản sử dụng",
-    isActive: false,
-    needsReview: true,
-    dataRightsNote: null,
-  },
 ];
 
 /**
- * Dữ liệu demo TỔNG HỢP: các công ty KHÔNG tồn tại ngoài lifecycle này.
- * Có 2 dòng trùng MST để demo khử trùng lặp; có dòng thiếu MST/sai MST để demo xử lý lỗi.
+ * Nạp DANH MỤC cấu hình (sản phẩm + mẫu tin nhắn + nguồn gốc).
+ * Idempotent. KHÔNG tạo công ty/lead nào — lead chỉ đến từ nguồn thật.
  */
-export const DEMO_ROWS: Record<string, string>[] = [
-  // nhóm A — thương mại/bán lẻ
-  { ten_doanh_nghiep: "Cong ty TNHH Minh Phat (demo)", ma_so_thue: "0312345677", dien_thoai: "0901234567", email: "info@minhphat-demo.vn", website: "https://minhphat-demo.vn", tinh: "TP. Hồ Chí Minh", dia_chi: "12 Nguyễn Trãi, Q.1", nganh_nghe: "Thương mại phân phối vật liệu xây dựng", nam_thanh_lap: "2021", trang_thai: "Đang hoạt động" },
-  { ten_doanh_nghiep: "Công ty TNHH Minh Phát (demo)", ma_so_thue: "0312345677", dien_thoai: "090-123-4567", tinh: "TP. HCM", nganh_nghe: "Thương mại phân phối vật liệu xây dựng" }, // trùng MST → demo merge
-  { ten_doanh_nghiep: "Cong ty Co phan Ban le Nha Xanh (demo)", ma_so_thue: "0101234565", dien_thoai: "0912345678", email: "lienhe@nhaxanh-demo.vn", website: "https://nhaxanh-demo.vn", tinh: "Hà Nội", dia_chi: "88 Hoàng Quốc Việt, Cầu Giấy", nganh_nghe: "Bán lẻ gia dụng, nội thất", nam_thanh_lap: "2019", trang_thai: "Đang hoạt động" },
-  { ten_doanh_nghiep: "Cong ty CP Chuoi Thuc Pham Vung Chat (demo)", ma_so_thue: "2401234560", dien_thoai: "0987654321", email: "cskh@vungchat-demo.vn", website: "https://vungchat-demo.vn", tinh: "Đà Nẵng", nganh_nghe: "Thực phẩm, chuỗi cửa hàng bán lẻ", nam_thanh_lap: "2023", trang_thai: "Đang hoạt động" },
-  // nhóm B/C — sản xuất, tuyển dụng
-  { ten_doanh_nghiep: "Cong ty TNHH San Xuat An Cuong (demo)", ma_so_thue: "0305512342", dien_thoai: "02838123456", email: "tuyendung@ancuong-demo.vn", website: "https://ancuong-demo.vn", tinh: "TP. Hồ Chí Minh", nganh_nghe: "Sản xuất cơ khí, chế biến", nam_thanh_lap: "2015", trang_thai: "Đang hoạt động" },
-  { ten_doanh_nghiep: "Cong ty TNHH May Mac Hoa Binh (demo)", ma_so_thue: "0909876548", dien_thoai: "0241234567", website: "https://hoabinh-demo.vn", tinh: "Hà Nội", nganh_nghe: "May mặc, sản xuất", nam_thanh_lap: "2012" },
-  { ten_doanh_nghiep: "Cong ty CP Logistik Song Han (demo)", ma_so_thue: "0315678904", dien_thoai: "0905551234", email: "info@songhan-demo.vn", website: "https://songhan-demo.vn", tinh: "Hải Phòng", nganh_nghe: "Logistics, giao nhận vận tải", nam_thanh_lap: "2018", trang_thai: "Đang hoạt động" },
-  // nhóm D/E — nhiều phòng ban, quy trình
-  { ten_doanh_nghiep: "Cong ty CP Bao Hiem Tin Tac (demo)", ma_so_thue: "0105567892", dien_thoai: "0961234567", email: "vanhanh@tintac-demo.vn", website: "https://tintac-demo.vn", tinh: "TP. Hồ Chí Minh", nganh_nghe: "Bảo hiểm", nam_thanh_lap: "2008", trang_thai: "Đang hoạt động" },
-  { ten_doanh_nghiep: "Cong ty TNHH Xay Dung Truong Thinh (demo)", ma_so_thue: "2501234564", dien_thoai: "0934567890", website: "https://truongthinh-demo.vn", tinh: "Bình Dương", nganh_nghe: "Xây dựng, thi công tổng thầu", nam_thanh_lap: "2010" },
-  // dòng lỗi — MST sai định dạng (demo ERROR)
-  { ten_doanh_nghiep: "Cong ty TNHH Sai Ma So Thue (demo)", ma_so_thue: "12345", dien_thoai: "0977778888", tinh: "Hà Nội", nganh_nghe: "Thương mại" },
-  // dòng thiếu MST — hợp lệ nhưng confidence thấp (demo NEEDS_VERIFICATION)
-  { ten_doanh_nghiep: "Cong ty Co phan Du An Mo Rong (demo)", dien_thoai: "0988777666", email: "duan@morong-demo.vn", tinh: "Đà Nẵng", nganh_nghe: "Thương mại dịch vụ", nam_thanh_lap: "2024" },
-  // NE là demo cần review (tên giống DN khác nhưng khác tỉnh)
-  { ten_doanh_nghiep: "Cong ty TNHH Minh Phat Binh Duong (demo)", ma_so_thue: "3701123451", dien_thoai: "0274123456", tinh: "Bình Dương", nganh_nghe: "Thương mại phân phối", nam_thanh_lap: "2022" },
-];
-
-export async function seedDemoData(config: ScoringConfig = DEFAULT_SCORING_CONFIG) {
-  // 1) sản phẩm
+export async function seedCatalog() {
   for (const p of PRODUCT_SEED) {
     await db.product.upsert({ where: { code: p.code }, create: p, update: p });
   }
-  // 2) templates
   const existingTemplates = await db.messageTemplate.count();
   if (existingTemplates === 0) {
     for (const t of TEMPLATE_SEED) {
       await db.messageTemplate.create({ data: { ...t, productCode: t.productCode ?? undefined } });
     }
   }
-  // 3) sources
   for (const s of SOURCE_SEED) {
     await db.source.upsert({ where: { name: s.name }, create: s, update: {} });
   }
-  // 4) demo segment có mẫu số — ghi rõ là DEMO minh họa phương pháp, cần thay bằng nguồn thực
-  const segName = "[DEMO] Thương mại TP.HCM";
-  const existingSeg = await db.segment.findFirst({ where: { name: segName } });
-  if (!existingSeg) {
-    await db.segment.create({
-      data: {
-        name: segName,
-        province: "TP. Hồ Chí Minh",
-        sector: "thuong mai",
-        estimatedTotal: 100000,
-        denominatorSource: "DEMO minh họa phương pháp — thay bằng số liệu đăng ký kinh doanh thực tế trước khi dùng",
-        documented: false, // DEMO không tự coi là đã tài liệu hóa → không hiện % cho đến khi thay nguồn thật
-        notes: "Phân khúc mẫu để trình bày cơ chế: chỉ khi documented=true và có denominatorSource thực tế thì % mới được tính",
-      },
-    });
+  await audit({ action: "catalog.seeded", entityType: "System", detail: { products: PRODUCT_SEED.length, sources: SOURCE_SEED.length } });
+}
+
+export type PurgeDemoResult = {
+  deletedCompanies: number;
+  deletedSegments: number;
+  deletedSuppressions: number;
+  deletedEvidences: number;
+};
+
+/**
+ * XÓA SẠCH toàn bộ lead demo còn sót từ phiên bản cũ:
+ * - Công ty có dấu hiệu demo "(demo)" / "[demo]" trong tên hoặc tên gốc
+ *   (cascade tự xóa contact/evidence/score/fit/task/event; SourceRecord → SetNull)
+ * - Bằng chứng gắn nhãn [DEMO]
+ * - Segment "[DEMO] ..." (mẫu số minh họa ảo)
+ * - Suppression mẫu ghi chú "DEMO: ..."
+ * KHÔNG đụng lead thật — chỉ xóa bản ghi có nhãn demo rõ ràng.
+ */
+export async function purgeDemoData(): Promise<PurgeDemoResult> {
+  // công ty demo theo tên
+  const demoCompanies = await db.company.findMany({
+    where: {
+      OR: [
+        { name: { contains: "(demo)" } },
+        { name: { contains: "(Demo)" } },
+        { name: { contains: "[demo]" } },
+        { rawName: { contains: "(demo)" } },
+        { rawName: { contains: "(Demo)" } },
+      ],
+    },
+    select: { id: true },
+  });
+  const demoIds = demoCompanies.map((c) => c.id);
+  let deletedEvidences = 0;
+  if (demoIds.length > 0) {
+    const ev = await db.evidence.deleteMany({ where: { companyId: { in: demoIds } } });
+    deletedEvidences = ev.count;
+    await db.company.deleteMany({ where: { id: { in: demoIds } } });
   }
-  // 5) suppression demo
-  const supValue = "08499999999";
-  const existingSup = await db.suppressionEntry.findUnique({ where: { value_scope: { value: supValue, scope: "GLOBAL" } } });
-  if (!existingSup) {
-    await db.suppressionEntry.create({ data: { value: supValue, scope: "GLOBAL", reason: "DEMO: doanh nghiệp yêu cầu không liên hệ" } });
-  }
-  // 6) companies qua pipeline (idempotent theo dedupKey)
-  const fileSource = await db.source.findUnique({ where: { name: "Tệp import nội bộ" } });
-  if (!fileSource) throw new Error("Seed: không tìm thấy nguồn import");
-  const result = await processRecords({ sourceId: fileSource.id, rows: DEMO_ROWS, config });
-  // 7) bằng chứng demo cho một số DN (giả lập bằng chứng công khai — ghi rõ nguồn demo)
-  const anc = await db.company.findFirst({ where: { name: { contains: "An Cuong" } } });
-  if (anc && !(await db.evidence.findFirst({ where: { companyId: anc.id, kind: "HIRING" } }))) {
-    await db.evidence.create({ data: { companyId: anc.id, kind: "HIRING", summary: "[DEMO] Công bố tin tuyển dụng 20 công nhân sản xuất", sourceName: "Tệp import nội bộ", confidence: "MEDIUM" } });
-  }
-  const tintac = await db.company.findFirst({ where: { name: { contains: "Tin Tac" } } });
-  if (tintac && !(await db.evidence.findFirst({ where: { companyId: tintac.id, kind: "MULTI_DEPT" } }))) {
-    await db.evidence.create({ data: { companyId: tintac.id, kind: "MULTI_DEPT", summary: "[DEMO] Trang công khai mô tả 5 phòng ban nghiệp vụ", sourceName: "Tệp import nội bộ", confidence: "HIGH" } });
-  }
-  const truongthinh = await db.company.findFirst({ where: { name: { contains: "Truong Thinh" } } });
-  if (truongthinh && !(await db.evidence.findFirst({ where: { companyId: truongthinh.id, kind: "PROCESS_SIGNAL" } }))) {
-    await db.evidence.create({ data: { companyId: truongthinh.id, kind: "PROCESS_SIGNAL", summary: "[DEMO] Công bố quy trình phê duyệt dự án nhiều cấp", sourceName: "Tệp import nội bộ", confidence: "MEDIUM" } });
-  }
-  // rescore các công ty vừa thêm bằng chứng
-  const all = await db.company.findMany({ select: { id: true } });
-  await rescoreCompanies(all.map((c) => c.id), config);
+  // bằng chứng demo dởm khác (nhãn [DEMO] trên công ty không còn tồn tại)
+  const evDemo = await db.evidence.deleteMany({ where: { summary: { contains: "[DEMO]" } } });
+  deletedEvidences += evDemo.count;
+  // segment demo
+  const seg = await db.segment.deleteMany({ where: { name: { contains: "[DEMO]" } } });
+  // suppression demo
+  const sup = await db.suppressionEntry.deleteMany({ where: { reason: { contains: "DEMO" } } });
+  const result: PurgeDemoResult = {
+    deletedCompanies: demoIds.length,
+    deletedSegments: seg.count,
+    deletedSuppressions: sup.count,
+    deletedEvidences,
+  };
+  await audit({ action: "admin.purge_demo", entityType: "System", detail: { ...result } });
   return result;
 }

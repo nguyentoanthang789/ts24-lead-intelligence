@@ -1,21 +1,13 @@
-// CLI seed: bun run scripts/seed.ts
-import { seedDemoData } from "../src/server/seed";
+// CLI seed catalog: bun run scripts/seed.ts — CHỈ nạp danh mục cấu hình,
+// KHÔNG tạo lead giả. Xóa lead demo: bun run scripts/purge-demo.ts
+import { seedCatalog } from "../src/server/seed";
 import { db } from "../src/lib/db";
 
 async function main() {
-  console.log("[seed] Nạp dữ liệu demo tổng hợp...");
-  const result = await seedDemoData();
-  console.log("[seed] Kết quả:", {
-    totalRows: result.totalRows,
-    validRows: result.validRows,
-    createdCompanies: result.createdCompanies,
-    mergedCompanies: result.mergedCompanies,
-    duplicateRecords: result.duplicateRecords,
-    errorRows: result.errorRows,
-    needsReview: result.needsReview,
-  });
+  console.log("[seed] Nạp danh mục cấu hình (sản phẩm + mẫu tin nhắn + nguồn)...");
+  await seedCatalog();
   const companies = await db.company.count();
-  console.log(`[seed] Tổng số công ty trong DB: ${companies}`);
+  console.log(`[seed] Hoàn tất. Số lead hiện có trong DB: ${companies} (chỉ lead thật — không tạo lead giả)`);
 }
 
 main()

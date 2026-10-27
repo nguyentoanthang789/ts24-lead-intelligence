@@ -9,12 +9,22 @@ import { ImportRow } from "../import-pipeline";
 import { processRecords } from "../import-pipeline";
 import { ScoringConfig } from "../scoring-config";
 import { audit } from "../compliance";
+import {
+  extractCompaniesFromHtml,
+  extractCompaniesFromJson,
+  ExtractResult,
+} from "../extract";
+import { CollectorConfig, DEFAULT_COLLECTOR_CONFIG } from "../collector-config";
 
 export type CollectorContext = {
   jobId: string;
   sourceId: string;
   sourceUrl: string | null;
   rateLimitPerMin: number;
+  /** số trang tối đa mỗi lần chạy nguồn (pagination thật) */
+  maxPages: number;
+  /** timeout mỗi request (ms) */
+  requestTimeoutMs: number;
   /** hàm fetch có thể inject để test không chạy mạng thật */
   fetchImpl?: typeof fetch;
   /** dừng an toàn — được poll giữa các bước */
@@ -111,7 +121,7 @@ export class WebPageAdapter implements CollectorAdapter {
   }
   async collect(ctx: CollectorContext): Promise<ImportRow[]> {
     if (!ctx.sourceUrl) throw new Error("Nguồn webpage cần URL");
-    // 1) Kiểm robots trước
+    // 1) Kiểm robots trước — RESTRICTED/CHECK_FAILED thì dừng an toàn
     const robots = await checkRobots(ctx.sourceUrl, ctx.fetchImpl ?? fetch);
     if (robots.status === "RESTRICTED") {
       throw new Error(`Nguồn từ chối thu thập theo robots.txt — dừng an toàn: ${robots.note}`);
@@ -119,27 +129,70 @@ export class WebPageAdapter implements CollectorAdapter {
     if (robots.status === "CHECK_FAILED") {
       throw new Error(`Không xác minh được điều kiện truy cập — dừng an toàn: ${robots.note}`);
     }
-    // 2) Rate limit: delay giữa các request theo rateLimitPerMin
+    // 2) Cào ĐA TRANG: trang 1 → trích xuất thật → theo link trang kế (cùng host)
+    //    tới tối đa ctx.maxPages; giữ nhịp theo rateLimitPerMin của nguồn.
     const delayMs = Math.max(0, Math.ceil(60000 / Math.max(1, ctx.rateLimitPerMin)));
-    await sleep(delayMs);
-    // 3) Fetch trang chính (chỉ 1 trang/1 lần chạy trong MVP — không crawl đệ quy)
-    const res = await withRetry(
-      () => (ctx.fetchImpl ?? fetch)(ctx.sourceUrl!, { signal: AbortSignal.timeout(15000) }),
-      { maxRetries: 2, baseDelayMs: 800, onRetry: (n, e) => logJob(ctx.jobId, `Retry lần ${n}: ${e instanceof Error ? e.message : e}`) }
-    );
-    if (res.status === 401 || res.status === 403 || res.status === 429) {
-      throw new Error(`Nguồn từ chối truy cập (HTTP ${res.status}) — dừng an toàn, không né cơ chế chống bot`);
+    const fetcher = ctx.fetchImpl ?? fetch;
+    const all: ImportRow[] = [];
+    const seenUrls = new Set<string>();
+    const seenContent = new Set<string>();
+    let url: string | null = ctx.sourceUrl;
+    let via: ExtractResult["via"] = "none";
+    for (let page = 1; page <= Math.max(1, ctx.maxPages) && url; page++) {
+      if (ctx.shouldStop && (await ctx.shouldStop())) {
+        await logJob(ctx.jobId, `Dừng an toàn theo yêu cầu tại trang ${page}`);
+        break;
+      }
+      await sleep(delayMs); // giữ nhịp rateLimitPerMin TRƯỚC MỖI request — tôn trọng nguồn
+      const res = await withRetry(
+        () => fetcher(url!, { signal: AbortSignal.timeout(ctx.requestTimeoutMs), redirect: "follow" }),
+        { maxRetries: 2, baseDelayMs: 800, onRetry: (n, e) => logJob(ctx.jobId, `Retry trang ${page} lần ${n}: ${e instanceof Error ? e.message : e}`) }
+      );
+      if (res.status === 401 || res.status === 403 || res.status === 429) {
+        if (page === 1) throw new Error(`Nguồn từ chối truy cập (HTTP ${res.status}) — dừng an toàn, không né cơ chế chống bot`);
+        await logJob(ctx.jobId, `Trang ${page} bị từ chối (HTTP ${res.status}) — dừng đi sâu, giữ phần đã lấy`);
+        break;
+      }
+      if (!res.ok) {
+        if (page === 1) throw new Error(`HTTP ${res.status} khi truy cập nguồn`);
+        await logJob(ctx.jobId, `Trang ${page} lỗi HTTP ${res.status} — dừng đi sâu, giữ phần đã lấy`);
+        break;
+      }
+      const body = await res.text();
+      // chống lặp vô hạn: trang trùng nội dung đã tải → dừng
+      const contentKey = body.length + ":" + body.slice(0, 4000);
+      if (seenContent.has(contentKey)) {
+        await logJob(ctx.jobId, `Trang ${page} trùng nội dung trang trước — dừng đi sâu`);
+        break;
+      }
+      seenContent.add(contentKey);
+      await db.collectionCheckpoint.create({
+        data: { jobId: ctx.jobId, cursor: JSON.stringify({ url, page }), note: `Đã tải trang ${page}` },
+      });
+      const contentType = (res.headers.get("content-type") ?? "").toLowerCase();
+      let extracted: ExtractResult;
+      if (contentType.includes("application/json") || contentType.includes("text/javascript") || body.trimStart().startsWith("{")) {
+        const rows = extractCompaniesFromJson(body);
+        extracted = { rows, nextLinks: [], via: rows.length ? "json" : "none" };
+      } else {
+        extracted = extractCompaniesFromHtml(body, url);
+      }
+      via = extracted.via;
+      seenUrls.add(url);
+      all.push(...extracted.rows);
+      await logJob(ctx.jobId, `Trang ${page} (${url}): ${extracted.rows.length} bản ghi — tổng ${all.length}`);
+      // link trang kế: cùng host, chưa đi qua
+      url = extracted.nextLinks.find((u) => !seenUrls.has(u)) ?? null;
+      if (page === 1) {
+        await db.collectionCheckpoint.create({
+          data: { jobId: ctx.jobId, cursor: JSON.stringify({ via, page: 1, rows: extracted.rows.length }), note: `Trích xuất qua ${via}` },
+        });
+      }
     }
-    if (!res.ok) throw new Error(`HTTP ${res.status} khi truy cập nguồn`);
-    const html = await res.text();
-    // 4) Ghi checkpoint
-    await db.collectionCheckpoint.create({
-      data: { jobId: ctx.jobId, cursor: JSON.stringify({ url: ctx.sourceUrl, done: true }), note: "Đã tải trang nguồn" },
-    });
-    // MVP: webpage adapter KHÔNG tự parse doanh nghiệp trừ khi khai báo parser;
-    // trả về rỗng + log để tránh tạo dữ liệu sai
-    logJob(ctx.jobId, `Đã tải ${html.length} ký tự từ nguồn. Chưa khai báo bộ phân tích cấu trúc — ghi nhận nguồn cần cấu hình parser.`);
-    return [];
+    if (via === "none" && all.length === 0) {
+      await logJob(ctx.jobId, `Không nhận ra cấu trúc danh bạ trên trang — ghi nhận nguồn cần xem xét parser. KHÔNG tạo dữ liệu thay thế.`);
+    }
+    return all;
   }
 }
 
@@ -169,11 +222,19 @@ export function getAdapterForSource(type: string): CollectorAdapter | null {
   }
 }
 
+export type RunJobOptions = {
+  /** inject fetch để test không chạy mạng thật */
+  fetchImpl?: typeof fetch;
+  /** cấu hình tốc độ thu thập (nếu bỏ trống dùng DEFAULT) */
+  collector?: CollectorConfig;
+};
+
 /**
  * Chạy một CollectionJob: kiểm tra quyền truy cập nguồn → adapter.collect → processRecords.
  * Trả về kết quả và cập nhật trạng thái job. Không tự tạo dữ liệu giả.
  */
-export async function runCollectionJob(jobId: string, config: ScoringConfig): Promise<CollectorResult> {
+export async function runCollectionJob(jobId: string, config: ScoringConfig, opts: RunJobOptions = {}): Promise<CollectorResult> {
+  const collector = opts.collector ?? DEFAULT_COLLECTOR_CONFIG;
   const job = await db.collectionJob.findUnique({ where: { id: jobId }, include: { source: true } });
   if (!job) return { status: "FAILED", rowsCollected: 0, message: "Job không tồn tại" };
   if (["CANCELLED", "FAILED", "COMPLETED"].includes(job.status)) {
@@ -200,6 +261,9 @@ export async function runCollectionJob(jobId: string, config: ScoringConfig): Pr
     const rows = await adapter.collect({
       jobId, sourceId: source.id, sourceUrl: source.url,
       rateLimitPerMin: source.rateLimitPerMin,
+      maxPages: collector.maxPagesPerSource,
+      requestTimeoutMs: collector.requestTimeoutMs,
+      fetchImpl: opts.fetchImpl,
       shouldStop: async () => {
         const j = await db.collectionJob.findUnique({ where: { id: jobId }, select: { status: true } });
         return j?.status === "PAUSED" || j?.status === "CANCELLED";
@@ -224,4 +288,36 @@ export async function runCollectionJob(jobId: string, config: ScoringConfig): Pr
     });
     return { status: "FAILED", rowsCollected: 0, message: msg };
   }
+}
+
+export type SourceJobOutcome = {
+  sourceId: string;
+  sourceName: string;
+  status: CollectorResult["status"];
+  rows: number;
+  message: string;
+};
+
+/**
+ * Chạy SONG SONG job thu thập cho nhiều nguồn mạng đang bật với giới hạn
+ * concurrency (mỗi nguồn vẫn tự giữ nhịp rateLimitPerMin của chính nó).
+ * Nguồn file/manual không có gì để thu — được bỏ qua từ trước khi gọi.
+ */
+export async function runSourceJobsParallel(
+  sources: { id: string; name: string }[],
+  config: ScoringConfig,
+  opts: { concurrency: number; fetchImpl?: typeof fetch; collector?: CollectorConfig }
+): Promise<SourceJobOutcome[]> {
+  const { runWithConcurrency } = await import("../collector-config");
+  return runWithConcurrency(sources, Math.max(1, opts.concurrency), async (s) => {
+    const job = await db.collectionJob.create({ data: { sourceId: s.id, status: "PENDING" } });
+    const res = await runCollectionJob(job.id, config, { fetchImpl: opts.fetchImpl, collector: opts.collector });
+    return {
+      sourceId: s.id,
+      sourceName: s.name,
+      status: res.status,
+      rows: res.rowsCollected,
+      message: res.message,
+    };
+  });
 }
