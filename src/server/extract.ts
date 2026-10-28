@@ -544,12 +544,12 @@ export function extractSitemapLocs(xml: string): { kind: "sitemapindex" | "urlse
 
 // ---------------- Lọc chất lượng tên ----------------
 
-/** Tên doanh nghiệp hợp lệ: không phải URL, không phải câu hỏi FAQ, không phải nhãn liên hệ */
+/** Tên doanh nghiệp hợp lệ: không phải URL, không phải câu hỏi FAQ, không phải nhãn liên hệ / điều hướng trang */
 export function isPlausibleName(n: string): boolean {
   const t = n.trim();
   if (!t || t.length < 4 || t.length > 200) return false;
   if (/^https?:\/\//i.test(t) || /^www\./i.test(t)) return false;
-  if (/^(số điện thoại|hotline|liên hệ|tel[:\s]|phone|email|địa chỉ|tra cứu|tìm kiếm)/i.test(t)) return false;
+  if (/^(số điện thoại|hotline|liên hệ|tel[:\s]|phone|email|địa chỉ|tra cứu|tìm kiếm|trang chủ|xem thêm|chi tiết|đăng nhập|đăng ký|menu|bỏ qua)/i.test(t)) return false;
   if (/[?？]\s*$/.test(t)) return false; // câu hỏi FAQ kiểu "… là của công ty nào?"
   return true;
 }

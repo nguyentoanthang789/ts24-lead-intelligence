@@ -440,3 +440,11 @@ describe("normalizeRow — chống nhầm MST thành SĐT", () => {
     expect(ok.normalized.contactName).toBe("Trần Thị B");
   });
 });
+
+describe("isPlausibleName — nhãn điều hướng trang", () => {
+  test("chặn breadcrumb rác 'Trang chủ + địa chỉ'", () => {
+    expect(isPlausibleName("Trang chủ Thành phố Hồ Chí Minh Quận 7 Phường Tân Phú CÔNG TY CỔ PHẦN")).toBe(false);
+    expect(isPlausibleName("Tra cứu hồ sơ SĐT")).toBe(false);
+    expect(isPlausibleName("CÔNG TY CỔ PHẦN SỮA VIỆT NAM")).toBe(true);
+  });
+});
