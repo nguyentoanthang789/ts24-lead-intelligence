@@ -170,6 +170,16 @@ function runtime(): ContinuousRuntime {
 export async function getContinuousStatus() {
   const cfg = await getContinuousConfig();
   const rt = runtime();
+  // trạng thái nguồn mạng đang bật — để UI hiển thị "lead đang chảy từ nguồn nào"
+  const networkTypes = ["COMPANY_WEBSITE", "PUBLIC_DIRECTORY", "OFFICIAL_API", "OFFICIAL_REGISTRY"];
+  const [activeSources, totalLeads] = await Promise.all([
+    db.source.findMany({
+      where: { isActive: true, type: { in: networkTypes } },
+      select: { name: true, lastRunAt: true },
+      orderBy: { name: "asc" },
+    }),
+    db.company.count(),
+  ]);
   return {
     config: cfg,
     active: rt.active,
@@ -184,6 +194,8 @@ export async function getContinuousStatus() {
     lastError: rt.lastError,
     nextCycleAt: rt.nextCycleAt,
     uptimeMinutes: rt.startedAt ? Math.max(0, Math.round((Date.now() - Date.parse(rt.startedAt)) / 60000)) : 0,
+    activeNetworkSources: activeSources.map((s) => s.name),
+    totalLeads,
   };
 }
 

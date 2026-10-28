@@ -1,0 +1,121 @@
+[
+  {
+    "label": "itviec.com",
+    "url": "https://itviec.com",
+    "httpStatus": 403,
+    "bytes": 0,
+    "error": ""
+  },
+  {
+    "label": "topcv.vn",
+    "url": "https://topcv.vn",
+    "httpStatus": 403,
+    "bytes": 0,
+    "error": ""
+  },
+  {
+    "label": "topdev.vn",
+    "url": "https://topdev.vn",
+    "httpStatus": 200,
+    "bytes": 1758645,
+    "error": ""
+  },
+  {
+    "label": "Wikidata SPARQL",
+    "url": "https://query.wikidata.org/sparql?query=SELECT%20%3Fitem%20%3Flabel%20WHERE%20%7B%20%3Fitem%20wdt%3AP17%20wd%3AQ881%20.%20%3Fitem%20rdfs%3Alabel%20%3Flabel%20.%20FILTER(LANG(%3Flabel)%3D%22vi%22)%7D%20LIMIT%205&format=json",
+    "httpStatus": 429,
+    "bytes": 0,
+    "error": ""
+  },
+  {
+    "label": "evbn.org",
+    "url": "https://evbn.org",
+    "httpStatus": 200,
+    "bytes": 132786,
+    "error": ""
+  },
+  {
+    "label": "vatgia.com",
+    "url": "https://vatgia.com",
+    "httpStatus": 200,
+    "bytes": 78702,
+    "error": ""
+  },
+  {
+    "label": "hangviet.vn",
+    "url": "https://hangviet.vn",
+    "httpStatus": null,
+    "bytes": 0,
+    "error": "Error"
+  },
+  {
+    "label": "GitHub API search",
+    "url": "https://api.github.com/search/repositories?q=doanh+nghiep+dataset&per_page=5",
+    "httpStatus": 200,
+    "bytes": 55,
+    "error": ""
+  },
+  {
+    "label": "vla.vn",
+    "url": "https://vla.vn",
+    "httpStatus": 200,
+    "bytes": 40448,
+    "error": ""
+  },
+  {
+    "label": "fdi.gov.vn",
+    "url": "https://fdi.gov.vn",
+    "httpStatus": null,
+    "bytes": 0,
+    "error": "Error"
+  },
+  {
+    "label": "doanhnghiepvn.vn",
+    "url": "https://doanhnghiepvn.vn",
+    "httpStatus": 200,
+    "bytes": 213462,
+    "error": ""
+  },
+  {
+    "label": "Wikipedia category (retry)",
+    "url": "https://vi.wikipedia.org/wiki/Th%E1%BB%83_lo%E1%BA%A1i:Doanh_nghi%E1%BB%87p_Vi%E1%BB%87t_Nam",
+    "httpStatus": 429,
+    "bytes": 0,
+    "error": ""
+  },
+  {
+    "label": "dangkykinhdoanh search",
+    "url": "https://dangkykinhdoanh.gov.vn/vi/trang-chu",
+    "httpStatus": 404,
+    "bytes": 0,
+    "error": ""
+  },
+  {
+    "label": "eurochamvn.org",
+    "url": "https://eurochamvn.org",
+    "httpStatus": 200,
+    "bytes": 599515,
+    "error": ""
+  },
+  {
+    "label": "vinasa.org.vn",
+    "url": "https://vinasa.org.vn",
+    "httpStatus": 200,
+    "bytes": 116459,
+    "error": ""
+  },
+  {
+    "label": "amchamvietnam.com",
+    "url": "https://www.amchamvietnam.com",
+    "httpStatus": 200,
+    "bytes": 3590,
+    "error": ""
+  },
+  {
+    "label": "hnx.vn",
+    "url": "https://www.hnx.vn",
+    "httpStatus": null,
+    "bytes": 0,
+    "error": "TimeoutError"
+  }
+]

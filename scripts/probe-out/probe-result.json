@@ -1,0 +1,470 @@
+[
+  {
+    "label": "data.gov.vn (CKAN)",
+    "url": "https://data.gov.vn",
+    "kind": "open-data",
+    "robots": {
+      "status": "CHECK_FAILED",
+      "note": "Unable to connect. Is the computer able to access the url?"
+    },
+    "httpStatus": null,
+    "bytes": 0,
+    "markerHits": 0,
+    "error": "Error: Was there a typo in the url or port?"
+  },
+  {
+    "label": "GSO Tổng cục Thống kê",
+    "url": "https://www.gso.gov.vn",
+    "kind": "official",
+    "robots": {
+      "status": "CHECK_FAILED",
+      "note": "Unable to connect. Is the computer able to access the url?"
+    },
+    "httpStatus": null,
+    "bytes": 0,
+    "markerHits": 0,
+    "error": "Error: Was there a typo in the url or port?"
+  },
+  {
+    "label": "masothue.com",
+    "url": "https://masothue.com",
+    "kind": "directory",
+    "robots": {
+      "status": "HTTP_403",
+      "note": "robots.txt không đọc được"
+    },
+    "httpStatus": 403,
+    "bytes": 0,
+    "markerHits": 0,
+    "error": ""
+  },
+  {
+    "label": "thongtindoanhnghiep.co",
+    "url": "https://thongtindoanhnghiep.co",
+    "kind": "directory",
+    "robots": {
+      "status": "HTTP_403",
+      "note": "robots.txt không đọc được"
+    },
+    "httpStatus": 403,
+    "bytes": 0,
+    "markerHits": 0,
+    "error": ""
+  },
+  {
+    "label": "trangvangvietnam.com",
+    "url": "https://www.trangvangvietnam.com",
+    "kind": "directory",
+    "robots": {
+      "status": "HTTP_403",
+      "note": "robots.txt không đọc được"
+    },
+    "httpStatus": 403,
+    "bytes": 0,
+    "markerHits": 0,
+    "error": ""
+  },
+  {
+    "label": "yellowpages.vn",
+    "url": "https://yellowpages.vn",
+    "kind": "directory",
+    "robots": {
+      "status": "HTTP_403",
+      "note": "robots.txt không đọc được"
+    },
+    "httpStatus": 403,
+    "bytes": 0,
+    "markerHits": 0,
+    "error": ""
+  },
+  {
+    "label": "mst.gov.vn",
+    "url": "https://mst.gov.vn",
+    "kind": "official",
+    "robots": {
+      "status": "OK",
+      "note": "ok (2 disallow, delay=-)"
+    },
+    "httpStatus": 200,
+    "bytes": 135038,
+    "markerHits": 4,
+    "error": ""
+  },
+  {
+    "label": "trangvang.vn",
+    "url": "https://trangvang.vn",
+    "kind": "directory",
+    "robots": {
+      "status": "CHECK_FAILED",
+      "note": "The socket connection was closed unexpectedly. For more info"
+    },
+    "httpStatus": null,
+    "bytes": 0,
+    "markerHits": 0,
+    "error": "Error: The socket connection was closed unexpectedly. For more information, pass `verbo"
+  },
+  {
+    "label": "companyvn.net",
+    "url": "https://www.companyvn.net",
+    "kind": "directory",
+    "robots": {
+      "status": "CHECK_FAILED",
+      "note": "Unable to connect. Is the computer able to access the url?"
+    },
+    "httpStatus": null,
+    "bytes": 0,
+    "markerHits": 0,
+    "error": "Error: Was there a typo in the url or port?"
+  },
+  {
+    "label": "hoikinhdoanh.vn",
+    "url": "https://hoikinhdoanh.vn",
+    "kind": "directory",
+    "robots": {
+      "status": "CHECK_FAILED",
+      "note": "Unable to connect. Is the computer able to access the url?"
+    },
+    "httpStatus": null,
+    "bytes": 0,
+    "markerHits": 0,
+    "error": "Error: Was there a typo in the url or port?"
+  },
+  {
+    "label": "infodoanhnghiep.com",
+    "url": "https://infodoanhnghiep.com",
+    "kind": "directory",
+    "robots": {
+      "status": "HTTP_403",
+      "note": "robots.txt không đọc được"
+    },
+    "httpStatus": 403,
+    "bytes": 0,
+    "markerHits": 0,
+    "error": ""
+  },
+  {
+    "label": "sme.gov.vn",
+    "url": "https://sme.gov.vn",
+    "kind": "official",
+    "robots": {
+      "status": "CHECK_FAILED",
+      "note": "Unable to connect. Is the computer able to access the url?"
+    },
+    "httpStatus": null,
+    "bytes": 0,
+    "markerHits": 0,
+    "error": "Error: Unable to connect. Is the computer able to access the url?"
+  },
+  {
+    "label": "doanhnghiepgannay.com",
+    "url": "https://doanhnghiepgannay.com",
+    "kind": "directory",
+    "robots": {
+      "status": "CHECK_FAILED",
+      "note": "Unable to connect. Is the computer able to access the url?"
+    },
+    "httpStatus": null,
+    "bytes": 0,
+    "markerHits": 0,
+    "error": "Error: Was there a typo in the url or port?"
+  },
+  {
+    "label": "dnbc.vn",
+    "url": "https://dnbc.vn",
+    "kind": "directory",
+    "robots": {
+      "status": "OK",
+      "note": "ok (0 disallow, delay=-)"
+    },
+    "httpStatus": 200,
+    "bytes": 11833,
+    "markerHits": 0,
+    "error": ""
+  },
+  {
+    "label": "Cổng ĐKKD quốc gia",
+    "url": "https://dangkykinhdoanh.gov.vn",
+    "kind": "official",
+    "robots": {
+      "status": "NO_ROBOTS(404)",
+      "note": "không có robots.txt"
+    },
+    "httpStatus": 200,
+    "bytes": 96969,
+    "markerHits": 1,
+    "error": ""
+  },
+  {
+    "label": "vat.com.vn",
+    "url": "https://vat.com.vn",
+    "kind": "directory",
+    "robots": {
+      "status": "CHECK_FAILED",
+      "note": "self signed certificate"
+    },
+    "httpStatus": null,
+    "bytes": 0,
+    "markerHits": 0,
+    "error": "Error: self signed certificate"
+  },
+  {
+    "label": "xahoithongtin? doanhtru",
+    "url": "https://doanhtru.vn",
+    "kind": "directory",
+    "robots": {
+      "status": "CHECK_FAILED",
+      "note": "Unable to connect. Is the computer able to access the url?"
+    },
+    "httpStatus": null,
+    "bytes": 0,
+    "markerHits": 0,
+    "error": "Error: Was there a typo in the url or port?"
+  },
+  {
+    "label": "topdoanhnghiep.vn",
+    "url": "https://topdoanhnghiep.vn",
+    "kind": "directory",
+    "robots": {
+      "status": "CHECK_FAILED",
+      "note": "certificate has expired"
+    },
+    "httpStatus": null,
+    "bytes": 0,
+    "markerHits": 0,
+    "error": "Error: certificate has expired"
+  },
+  {
+    "label": "Hanoia",
+    "url": "https://hanoia.org.vn",
+    "kind": "association",
+    "robots": {
+      "status": "CHECK_FAILED",
+      "note": "Unable to connect. Is the computer able to access the url?"
+    },
+    "httpStatus": null,
+    "bytes": 0,
+    "markerHits": 0,
+    "error": "Error: Was there a typo in the url or port?"
+  },
+  {
+    "label": "vinasme",
+    "url": "https://vinasme.gov.vn",
+    "kind": "association",
+    "robots": {
+      "status": "CHECK_FAILED",
+      "note": "Unable to connect. Is the computer able to access the url?"
+    },
+    "httpStatus": null,
+    "bytes": 0,
+    "markerHits": 0,
+    "error": "Error: Was there a typo in the url or port?"
+  },
+  {
+    "label": "vietnamexport.com",
+    "url": "https://www.vietnamexport.com",
+    "kind": "trade",
+    "robots": {
+      "status": "CHECK_FAILED",
+      "note": "Unable to connect. Is the computer able to access the url?"
+    },
+    "httpStatus": null,
+    "bytes": 0,
+    "markerHits": 0,
+    "error": "Error: Unable to connect. Is the computer able to access the url?"
+  },
+  {
+    "label": "ec21 (VN)",
+    "url": "https://vietnam.ec21.com",
+    "kind": "trade",
+    "robots": {
+      "status": "CHECK_FAILED",
+      "note": "Unable to connect. Is the computer able to access the url?"
+    },
+    "httpStatus": null,
+    "bytes": 0,
+    "markerHits": 0,
+    "error": "Error: Was there a typo in the url or port?"
+  },
+  {
+    "label": "VCCI HCM",
+    "url": "https://www.vcci-hcm.org.vn",
+    "kind": "association",
+    "robots": {
+      "status": "CHECK_FAILED",
+      "note": "ERR_TLS_CERT_ALTNAME_INVALID fetching \"https://www.vcci-hcm."
+    },
+    "httpStatus": null,
+    "bytes": 0,
+    "markerHits": 0,
+    "error": "Error: ERR_TLS_CERT_ALTNAME_INVALID fetching \"https://www.vcci-hcm.org.vn/\". For more i"
+  },
+  {
+    "label": "go4worldbusiness VN",
+    "url": "https://www.go4worldbusiness.com/suppliers/vietnam.html",
+    "kind": "trade",
+    "robots": {
+      "status": "OK",
+      "note": "ok (17 disallow, delay=-)"
+    },
+    "httpStatus": 200,
+    "bytes": 730493,
+    "markerHits": 0,
+    "error": ""
+  },
+  {
+    "label": "danhbavietnam.com",
+    "url": "https://danhbavietnam.com",
+    "kind": "directory",
+    "robots": {
+      "status": "OK",
+      "note": "ok (2 disallow, delay=-)"
+    },
+    "httpStatus": 200,
+    "bytes": 130557,
+    "markerHits": 6,
+    "error": ""
+  },
+  {
+    "label": "stockbiz.vn",
+    "url": "https://stockbiz.vn",
+    "kind": "market",
+    "robots": {
+      "status": "OK",
+      "note": "ok (5 disallow, delay=-)"
+    },
+    "httpStatus": 200,
+    "bytes": 337392,
+    "markerHits": 1,
+    "error": ""
+  },
+  {
+    "label": "tradekey VN",
+    "url": "https://www.tradekey.com/country/Vietnam/",
+    "kind": "trade",
+    "robots": {
+      "status": "OK",
+      "note": "ok (5 disallow, delay=-)"
+    },
+    "httpStatus": 200,
+    "bytes": 238050,
+    "markerHits": 0,
+    "error": ""
+  },
+  {
+    "label": "simplize.vn",
+    "url": "https://simplize.vn",
+    "kind": "market",
+    "robots": {
+      "status": "OK",
+      "note": "ok (7 disallow, delay=-)"
+    },
+    "httpStatus": 200,
+    "bytes": 424949,
+    "markerHits": 4,
+    "error": ""
+  },
+  {
+    "label": "vietstock",
+    "url": "https://finance.vietstock.vn",
+    "kind": "market",
+    "robots": {
+      "status": "OK",
+      "note": "ok (6 disallow, delay=-)"
+    },
+    "httpStatus": 200,
+    "bytes": 386454,
+    "markerHits": 2,
+    "error": ""
+  },
+  {
+    "label": "Wikidata Query",
+    "url": "https://query.wikidata.org",
+    "kind": "open-data",
+    "robots": {
+      "status": "HTTP_403",
+      "note": "robots.txt không đọc được"
+    },
+    "httpStatus": 403,
+    "bytes": 0,
+    "markerHits": 0,
+    "error": ""
+  },
+  {
+    "label": "Wikipedia VN companies",
+    "url": "https://vi.wikipedia.org/wiki/Thể_loại:Doanh_nghiệp_Việt_Nam",
+    "kind": "open-data",
+    "robots": {
+      "status": "HTTP_429",
+      "note": "robots.txt không đọc được"
+    },
+    "httpStatus": 429,
+    "bytes": 0,
+    "markerHits": 0,
+    "error": ""
+  },
+  {
+    "label": "OpenCorporates VN",
+    "url": "https://opencorporates.com/companies/vn",
+    "kind": "open-data",
+    "robots": {
+      "status": "OK",
+      "note": "ok (13 disallow, delay=-)"
+    },
+    "httpStatus": 200,
+    "bytes": 21380,
+    "markerHits": 0,
+    "error": ""
+  },
+  {
+    "label": "muasamcong (e-GP)",
+    "url": "https://muasamcong.mpi.gov.vn",
+    "kind": "official",
+    "robots": {
+      "status": "OK",
+      "note": "ok (0 disallow, delay=-)"
+    },
+    "httpStatus": null,
+    "bytes": 0,
+    "markerHits": 0,
+    "error": "TimeoutError: The operation timed out."
+  },
+  {
+    "label": "OpenDev Vietnam",
+    "url": "https://vietnam.opendevelopmentmekong.net",
+    "kind": "open-data",
+    "robots": {
+      "status": "CHECK_FAILED",
+      "note": "The operation timed out."
+    },
+    "httpStatus": 200,
+    "bytes": 167691,
+    "markerHits": 0,
+    "error": ""
+  },
+  {
+    "label": "Tổng cục Thuế",
+    "url": "https://www.gdt.gov.vn",
+    "kind": "official",
+    "robots": {
+      "status": "CHECK_FAILED",
+      "note": "The operation timed out."
+    },
+    "httpStatus": null,
+    "bytes": 0,
+    "markerHits": 0,
+    "error": "TimeoutError: The operation timed out."
+  },
+  {
+    "label": "VCCI",
+    "url": "https://vcci.org.vn",
+    "kind": "association",
+    "robots": {
+      "status": "CHECK_FAILED",
+      "note": "The operation timed out."
+    },
+    "httpStatus": null,
+    "bytes": 0,
+    "markerHits": 0,
+    "error": "TimeoutError: The operation timed out."
+  }
+]

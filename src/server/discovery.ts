@@ -61,6 +61,30 @@ export const CANDIDATE_SOURCES: DiscoveryCandidate[] = [
     url: "https://thongtindoanhnghiep.co",
     description: "Tra cứu thông tin doanh nghiệp công khai",
   },
+  {
+    name: "Danh Bạ Việt Nam — Sitemap hồ sơ công ty",
+    type: "PUBLIC_DIRECTORY",
+    url: "https://danhbavietnam.com/api/sitemaps/sitemap-companies-latest.xml",
+    description: "Sitemap công khai danh sách hồ sơ doanh nghiệp (robots.txt cho phép, chỉ cấm /admin/) — cào từng trang hồ sơ có MST, địa chỉ, SĐT, website",
+  },
+  {
+    name: "Danh Bạ Việt Nam — API tìm kiếm công ty",
+    type: "OFFICIAL_API",
+    url: "https://danhbavietnam.com/api/search?q=cong+ty",
+    description: "API tìm kiếm công khai của Danh Bạ Việt Nam (JSON: MST, tên, tỉnh, trạng thái) — robots.txt cho phép /api/search",
+  },
+  {
+    name: "EuroCham Việt Nam — Danh mục thành viên",
+    type: "PUBLIC_DIRECTORY",
+    url: "https://www.eurochamvn.org/members",
+    description: "Danh mục thành viên EuroCham (doanh nghiệp tại Việt Nam, có email liên hệ công khai) — không có robots.txt (mặc định cho phép)",
+  },
+  {
+    name: "Wikidata — doanh nghiệp Việt Nam (SPARQL)",
+    type: "OFFICIAL_API",
+    url: "https://query.wikidata.org/sparql",
+    description: "Dữ liệu mở CC0 — truy vấn SPARQL doanh nghiệp Việt Nam; chịu giới hạn tần suất (429) nên giữ nhịp chậm",
+  },
 ];
 
 /** Chuẩn hóa URL về origin (scheme://host) — null nếu không phải http(s) */

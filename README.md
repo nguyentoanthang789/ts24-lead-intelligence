@@ -219,6 +219,28 @@ Từ bản này, Collector Engine **cào được lead thật** thay vì chỉ g
 
 Nghĩa là với nguồn danh bạ thông thường, **nút thắt là tốc độ nguồn cho phép (robots.txt + rate limit), không phải bot** — bot xử lý thoải mái gấp cả nghìn lần tốc độ nguồn cho phép. Muốn nhiều lead hơn: bật càng nhiều nguồn đã duyệt càng tốt + tăng `maxPagesPerSource`/`sourceConcurrency`, hoặc dùng kênh inbox (5.000 dòng/tệp, nhập liên tục — ~580 lead/giây).
 
+## 9.4. Nguồn thật ĐANG CHẠY (đã probe từ sandbox — 28/10/2026)
+
+Đã probe ~50 nguồn ứng viên từ môi trường chạy thật. Phần lớn danh bạ VN (masothue, trangvangvietnam, yellowpages, thongtindoanhnghiep, itviec, topcv...) **chủ động chặn bot (HTTP 403)** — hệ thống không né chống bot nên các nguồn này để tắt chờ duyệt. Các nguồn **cào được thật, robots cho phép, đã BẬT**:
+
+| Nguồn | Loại | Robots | Dữ liệu | Số lượng |
+|---|---|---|---|---|
+| Danh Bạ Việt Nam — sitemap hồ sơ | `PUBLIC_DIRECTORY` | `Allow: /` (chỉ cấm `/admin/`) | MST, tên, địa chỉ, SĐT, website + trạng thái | toàn bộ hồ sơ trên sitemap |
+| Danh Bạ Việt Nam — API tìm kiếm | `OFFICIAL_API` | cho phép `/api/search` | JSON: MST, tên, tỉnh, trạng thái | 5 kết quả/lần chạy |
+| EuroCham Việt Nam — thành viên | `PUBLIC_DIRECTORY` | không có robots.txt (404) | tên + email liên hệ công khai | ~1.100+ DN, 25 trang |
+
+Kết quả thật: **~1.160 lead thật** vào DB sau vài vòng (khử trùng lặp tự động giữa các vòng — nguồn cập nhật thì lead mới tự chảy vào).
+
+**Nâng cấp extractor phục vụ các nguồn trên** (`src/server/extract.ts`):
+
+- **Bảng hồ sơ dọc** (`verticalProfileFromGrid`): trang chi tiết DN dạng "Mã số thuế \| giá trị" từng dòng → 1 record; nhận tên từ `<h1>` (tách "Tên - MST xxx" → tên + MST).
+- **Cặp div data-row** (`verticalProfileFromDataRows`): kiểu `data-row-heading`/`data-row-value` (hồ sơ EuroCham).
+- **Thẻ thành viên data-mail** (`extractMembersWithDataMail`): danh bạ gắn email trên thuộc tính `data-mail` → tên + email.
+- **Chế độ sitemap** trong WebPageAdapter: nguồn trỏ thẳng tới `sitemap.xml` → đọc `sitemapindex`/`urlset` → cào TỪNG trang hồ sơ với nhịp rateLimit tới `maxPagesPerSource`, dừng an toàn khi nguồn 401/403/429.
+- **Cổng chất lượng tên**: chặn tên rác (URL, câu hỏi FAQ, nhãn "Số điện thoại..."), cắt đuôi "MST: xxx" khỏi tên, xóa SĐT bị nhầm = MST — không để dữ liệu bẩn vào pipeline.
+
+Kịch bản khởi động lại nguồn + cào ngay: `bun scripts/activate-and-crawl.ts` (kiểm robots từng nguồn trước khi bật — nguồn không cho phép thì không bật).
+
 ## 10. Chấm điểm & xem độ bao phủ
 
 - **Thang điểm 0–100** (cấu hình tại Cài đặt): Phù hợp sản phẩm 0–30 · Bằng chứng nhu cầu 0–25 · Phân khúc 0–20 · Khả năng liên hệ 0–15 · Độ mới dữ liệu 0–10. Lưu cấu hình → tự tăng `ruleVersion`; mọi LeadScore lưu kèm phiên bản quy tắc.

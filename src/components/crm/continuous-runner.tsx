@@ -32,6 +32,8 @@ type ContinuousStatus = {
   lastError: string | null;
   nextCycleAt: string | null;
   uptimeMinutes: number;
+  activeNetworkSources: string[];
+  totalLeads: number;
 };
 
 export function ContinuousRunnerCard() {
@@ -159,13 +161,23 @@ export function ContinuousRunnerCard() {
             : <> Hết vòng nghỉ <b>{st.config.intervalMinutes}</b> phút rồi chạy tiếp — hoạt động 24/7 cho tới khi bấm STOP (server khởi động lại cũng tự chạy tiếp).</>}
           {" "}Vẫn tôn trọng robots.txt &amp; hạn tốc độ của từng nguồn; <b>không tự gửi tin nhắn Zalo</b>.
         </p>
-        <Alert>
-          <AlertTitle className="text-sm">Vì sao lead chưa chảy ra — 2 kênh để bot tự tạo lead</AlertTitle>
-          <AlertDescription className="text-xs space-y-1">
-            <p><b>Kênh 1 — Nguồn mạng:</b> vào <b>Nguồn dữ liệu</b> duyệt + bật nguồn đã được phép. Phần lớn danh bạ VN chủ động chặn bot (HTTP 403) và hệ thống <b>không né cơ chế chống bot</b> — chỉ bật được nguồn nào cho phép truy cập.</p>
-            <p><b>Kênh 2 — Hộp thư inbox (luôn chạy):</b> thả tệp CSV/XLSX doanh nghiệp vào thư mục <code className="font-mono">upload/inbox/</code> — bot tự nhập ở vòng kế tiếp: chuẩn hóa → khử trùng lặp → chấm điểm → lead xuất hiện ở Lead Explorer. Tệp đã nhập chuyển sang <code className="font-mono">processed/</code>, tệp lỗi sang <code className="font-mono">failed/</code>.</p>
-          </AlertDescription>
-        </Alert>
+        {(st.activeNetworkSources?.length ?? 0) > 0 ? (
+          <Alert className="border-emerald-200 bg-emerald-50/60">
+            <AlertTitle className="text-sm">Lead đang chảy từ {st.activeNetworkSources.length} nguồn mạng đang bật — {st.totalLeads.toLocaleString("vi-VN")} lead thật trong hệ thống</AlertTitle>
+            <AlertDescription className="text-xs space-y-1">
+              <p>{st.activeNetworkSources.join(" · ")}</p>
+              <p>Mỗi vòng: thu thập lại (khử trùng lặp tự động) → lead mới từ nguồn sẽ xuất hiện ở <b>Lead Explorer</b>. Muốn thêm nguồn: vào <b>Nguồn dữ liệu</b> duyệt nguồn mới hoặc thả tệp CSV/XLSX vào <code className="font-mono">upload/inbox/</code>.</p>
+            </AlertDescription>
+          </Alert>
+        ) : (
+          <Alert>
+            <AlertTitle className="text-sm">Vì sao lead chưa chảy ra — 2 kênh để bot tự tạo lead</AlertTitle>
+            <AlertDescription className="text-xs space-y-1">
+              <p><b>Kênh 1 — Nguồn mạng:</b> vào <b>Nguồn dữ liệu</b> duyệt + bật nguồn đã được phép. Phần lớn danh bạ VN chủ động chặn bot (HTTP 403) và hệ thống <b>không né cơ chế chống bot</b> — chỉ bật được nguồn nào cho phép truy cập.</p>
+              <p><b>Kênh 2 — Hộp thư inbox (luôn chạy):</b> thả tệp CSV/XLSX doanh nghiệp vào thư mục <code className="font-mono">upload/inbox/</code> — bot tự nhập ở vòng kế tiếp: chuẩn hóa → khử trùng lặp → chấm điểm → lead xuất hiện ở Lead Explorer. Tệp đã nhập chuyển sang <code className="font-mono">processed/</code>, tệp lỗi sang <code className="font-mono">failed/</code>.</p>
+            </AlertDescription>
+          </Alert>
+        )}
 
         <div className="grid gap-3 sm:grid-cols-3">
           <div className="rounded-lg border p-3">

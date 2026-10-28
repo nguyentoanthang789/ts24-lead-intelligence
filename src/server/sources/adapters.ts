@@ -12,6 +12,7 @@ import { audit } from "../compliance";
 import {
   extractCompaniesFromHtml,
   extractCompaniesFromJson,
+  extractSitemapLocs,
   ExtractResult,
 } from "../extract";
 import { CollectorConfig, DEFAULT_COLLECTOR_CONFIG } from "../collector-config";
@@ -169,6 +170,11 @@ export class WebPageAdapter implements CollectorAdapter {
       await db.collectionCheckpoint.create({
         data: { jobId: ctx.jobId, cursor: JSON.stringify({ url, page }), note: `Đã tải trang ${page}` },
       });
+      // SITEMAP: nguồn trỏ thẳng vào sitemap.xml → cào TỪNG trang hồ sơ company
+      if (/^\s*<\?xml/i.test(body) && /<(urlset|sitemapindex)\b/i.test(body)) {
+        const rows = await this.collectFromSitemap(ctx, body, all);
+        return rows;
+      }
       const contentType = (res.headers.get("content-type") ?? "").toLowerCase();
       let extracted: ExtractResult;
       if (contentType.includes("application/json") || contentType.includes("text/javascript") || body.trimStart().startsWith("{")) {
@@ -191,6 +197,99 @@ export class WebPageAdapter implements CollectorAdapter {
     }
     if (via === "none" && all.length === 0) {
       await logJob(ctx.jobId, `Không nhận ra cấu trúc danh bạ trên trang — ghi nhận nguồn cần xem xét parser. KHÔNG tạo dữ liệu thay thế.`);
+    }
+    return all;
+  }
+
+  /**
+   * Chế độ sitemap: nguồn trỏ tới sitemap.xml (nguồn chủ động công khai danh sách
+   * URL cho bot — robots.txt của nguồn cho phép). sitemapindex → vào tối đa 2 sitemap
+   * con (ưu tiên sitemap công ty) → urlset → cào TỪNG trang hồ sơ với nhịp rateLimit,
+   * tới tối đa maxPages request. 401/403/429 → dừng an toàn, giữ phần đã lấy.
+   */
+  private async collectFromSitemap(ctx: CollectorContext, xml: string, all: ImportRow[]): Promise<ImportRow[]> {
+    const delayMs = Math.max(0, Math.ceil(60000 / Math.max(1, ctx.rateLimitPerMin)));
+    const fetcher = ctx.fetchImpl ?? fetch;
+    const origin = new URL(ctx.sourceUrl!).origin;
+    const { kind, locs: firstLocs } = extractSitemapLocs(xml);
+    let pageUrls: string[] = [];
+    if (kind === "urlset") {
+      pageUrls = firstLocs;
+    } else {
+      // sitemapindex: chọn sitemap con cùng host, ưu tiên sitemap công ty
+      const children = firstLocs
+        .filter((u) => {
+          try { return new URL(u).origin === origin; } catch { return false; }
+        })
+        .sort((a, b) => Number(/compan|cong-ty|congty/i.test(b)) - Number(/compan|cong-ty|congty/i.test(a)))
+        .slice(0, 2);
+      for (const child of children) {
+        if (ctx.shouldStop && (await ctx.shouldStop())) break;
+        await sleep(delayMs);
+        try {
+          const res = await fetcher(child, { signal: AbortSignal.timeout(ctx.requestTimeoutMs) });
+          if (!res.ok) {
+            await logJob(ctx.jobId, `Sitemap con ${child} HTTP ${res.status} — bỏ qua`);
+            continue;
+          }
+          const txt = await res.text();
+          const childLocs = extractSitemapLocs(txt).locs;
+          pageUrls.push(...childLocs);
+          await db.collectionCheckpoint.create({
+            data: { jobId: ctx.jobId, cursor: JSON.stringify({ sitemap: child, urls: childLocs.length }), note: `Đọc sitemap con` },
+          });
+        } catch (e) {
+          await logJob(ctx.jobId, `Lỗi tải sitemap con ${child}: ${e instanceof Error ? e.message : e}`);
+        }
+      }
+    }
+    // lọc cùng host + khử trùng lặp
+    const seen = new Set<string>();
+    const targets: string[] = [];
+    for (const u of pageUrls) {
+      try {
+        const x = new URL(u);
+        if (x.origin !== origin || seen.has(u)) continue;
+        seen.add(u);
+        targets.push(u);
+      } catch { /* bỏ URL hỏng */ }
+    }
+    const budget = Math.max(0, Math.max(1, ctx.maxPages) - 1); // trừ 1 request gốc
+    await logJob(ctx.jobId, `Chế độ sitemap: ${targets.length} URL hồ sơ, cào tối đa ${budget}`);
+    for (let i = 0; i < targets.length && i < budget; i++) {
+      if (ctx.shouldStop && (await ctx.shouldStop())) {
+        await logJob(ctx.jobId, `Dừng an toàn theo yêu cầu tại hồ sơ ${i + 1}`);
+        break;
+      }
+      await sleep(delayMs);
+      let res: Response;
+      try {
+        res = await withRetry(
+          () => fetcher(targets[i], { signal: AbortSignal.timeout(ctx.requestTimeoutMs), redirect: "follow" }),
+          { maxRetries: 1, baseDelayMs: 800 }
+        );
+      } catch (e) {
+        await logJob(ctx.jobId, `Hồ sơ ${i + 1} lỗi mạng: ${e instanceof Error ? e.message : e} — bỏ qua`);
+        continue;
+      }
+      if (res.status === 401 || res.status === 403 || res.status === 429) {
+        await logJob(ctx.jobId, `Nguồn từ chối (HTTP ${res.status}) tại ${targets[i]} — dừng an toàn, giữ phần đã lấy`);
+        break;
+      }
+      if (!res.ok) {
+        await logJob(ctx.jobId, `Hồ sơ ${i + 1} HTTP ${res.status} — bỏ qua`);
+        continue;
+      }
+      const b = await res.text();
+      await db.collectionCheckpoint.create({
+        data: { jobId: ctx.jobId, cursor: JSON.stringify({ url: targets[i], idx: i + 1 }), note: `Đã tải hồ sơ ${i + 1}` },
+      });
+      const extracted = extractCompaniesFromHtml(b, targets[i]);
+      all.push(...extracted.rows);
+      await logJob(ctx.jobId, `Hồ sơ ${i + 1}/${Math.min(targets.length, budget)}: ${extracted.rows.length} bản ghi — tổng ${all.length}`);
+    }
+    if (all.length === 0) {
+      await logJob(ctx.jobId, `Sitemap không cho bản ghi nào — KHÔNG tạo dữ liệu thay thế.`);
     }
     return all;
   }

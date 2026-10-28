@@ -32,7 +32,7 @@ describe("Source Discovery — danh mục ứng viên", () => {
       expect(normalizeSourceUrl(c.url)).not.toBeNull();
       expect(c.name.length).toBeGreaterThan(3);
       expect(c.description.length).toBeGreaterThan(10);
-      expect(["OFFICIAL_REGISTRY", "PUBLIC_DIRECTORY"]).toContain(c.type);
+      expect(["OFFICIAL_REGISTRY", "PUBLIC_DIRECTORY", "OFFICIAL_API"]).toContain(c.type);
     }
   });
 
