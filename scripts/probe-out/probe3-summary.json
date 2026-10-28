@@ -1,0 +1,184 @@
+[
+  {
+    "label": "infodoanhnghiep.co",
+    "url": "https://infodoanhnghiep.co",
+    "httpStatus": null,
+    "bytes": 0,
+    "error": "Error"
+  },
+  {
+    "label": "thongtindoanhnghiep.co (retry path)",
+    "url": "https://thongtindoanhnghiep.co/tra-cuu-ma-so-thue",
+    "httpStatus": 403,
+    "bytes": 0,
+    "error": ""
+  },
+  {
+    "label": "companyinfo.vn",
+    "url": "https://companyinfo.vn",
+    "httpStatus": null,
+    "bytes": 0,
+    "error": "Error"
+  },
+  {
+    "label": "timcongty.vn",
+    "url": "https://timcongty.vn",
+    "httpStatus": null,
+    "bytes": 0,
+    "error": "Error"
+  },
+  {
+    "label": "doanhnghieponline",
+    "url": "https://doanhnghieponline.gov.vn",
+    "httpStatus": null,
+    "bytes": 0,
+    "error": "Error"
+  },
+  {
+    "label": "mst.vn",
+    "url": "https://mst.vn",
+    "httpStatus": null,
+    "bytes": 0,
+    "error": "Error"
+  },
+  {
+    "label": "tracuumst.com",
+    "url": "https://tracuumst.com",
+    "httpStatus": 200,
+    "bytes": 47990,
+    "error": ""
+  },
+  {
+    "label": "vietnamexport.com",
+    "url": "https://www.vietnamexport.com",
+    "httpStatus": null,
+    "bytes": 0,
+    "error": "Error"
+  },
+  {
+    "label": "congty.vn",
+    "url": "https://congty.vn",
+    "httpStatus": null,
+    "bytes": 0,
+    "error": "Error"
+  },
+  {
+    "label": "hosocongty.vn",
+    "url": "https://hosocongty.vn",
+    "httpStatus": null,
+    "bytes": 0,
+    "error": "Error"
+  },
+  {
+    "label": "vntrades",
+    "url": "https://vntrades.com",
+    "httpStatus": null,
+    "bytes": 0,
+    "error": "Error"
+  },
+  {
+    "label": "24hcongty",
+    "url": "https://24hcongty.com",
+    "httpStatus": null,
+    "bytes": 0,
+    "error": "Error"
+  },
+  {
+    "label": "sanvangonline",
+    "url": "https://sanvangonline.com",
+    "httpStatus": null,
+    "bytes": 0,
+    "error": "Error"
+  },
+  {
+    "label": "auschamvn",
+    "url": "https://auschamvn.org.au",
+    "httpStatus": null,
+    "bytes": 0,
+    "error": "Error"
+  },
+  {
+    "label": "ccichn.org.vn",
+    "url": "https://www.ccichn.org.vn",
+    "httpStatus": null,
+    "bytes": 0,
+    "error": "Error"
+  },
+  {
+    "label": "hangnhatvn",
+    "url": "https://hangnhat.com.vn",
+    "httpStatus": 200,
+    "bytes": 11759,
+    "error": ""
+  },
+  {
+    "label": "canadianchamvietnam",
+    "url": "https://canchamvietnam.ca",
+    "httpStatus": null,
+    "bytes": 0,
+    "error": "Error"
+  },
+  {
+    "label": "ccihcmc.org.vn",
+    "url": "https://ccihcmc.org.vn",
+    "httpStatus": null,
+    "bytes": 0,
+    "error": "Error"
+  },
+  {
+    "label": "danhbavietnam sitemap index",
+    "url": "https://danhbavietnam.com/api/sitemaps/sitemap-index.xml",
+    "httpStatus": 200,
+    "bytes": 3121,
+    "error": ""
+  },
+  {
+    "label": "danhbavietnam search api (paginate)",
+    "url": "https://danhbavietnam.com/api/search?q=cong+ty+tnhh&page=2",
+    "httpStatus": 200,
+    "bytes": 3466,
+    "error": ""
+  },
+  {
+    "label": "danhbavietnam company page",
+    "url": "https://danhbavietnam.com/cong-ty/tnhh-minh-phat-3700995588",
+    "httpStatus": 200,
+    "bytes": 35970,
+    "error": ""
+  },
+  {
+    "label": "datahub.io",
+    "url": "https://datahub.io/dataset?search=vietnam",
+    "httpStatus": 200,
+    "bytes": 55412,
+    "error": ""
+  },
+  {
+    "label": "gitlab datasets",
+    "url": "https://gitlab.com/api/v4/projects?search=doanh+nghiep",
+    "httpStatus": 200,
+    "bytes": 33185,
+    "error": ""
+  },
+  {
+    "label": "opencorporates VN",
+    "url": "https://api.opencorporates.com/v0.4/companies/search?q=vietnam",
+    "httpStatus": 401,
+    "bytes": 0,
+    "error": ""
+  },
+  {
+    "label": "singchamvn",
+    "url": "https://www.singchamvn.org",
+    "httpStatus": 200,
+    "bytes": 537450,
+    "error": ""
+  },
+  {
+    "label": "vcci.org.vn",
+    "url": "https://vcci.org.vn",
+    "httpStatus": null,
+    "bytes": 0,
+    "error": "TimeoutError"
+  }
+]

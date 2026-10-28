@@ -255,12 +255,29 @@ export class WebPageAdapter implements CollectorAdapter {
       } catch { /* bỏ URL hỏng */ }
     }
     const budget = Math.max(0, Math.max(1, ctx.maxPages) - 1); // trừ 1 request gốc
-    await logJob(ctx.jobId, `Chế độ sitemap: ${targets.length} URL hồ sơ, cào tối đa ${budget}`);
-    for (let i = 0; i < targets.length && i < budget; i++) {
+    // RESUME: đọc checkpoint gần nhất của CÙNG nguồn (job trước) — mỗi vòng liên tục
+    // đi TIẾP vào sitemap thay vì quét lại từ đầu; sitemap đổi độ dài → quét lại từ 0
+    let startIdx = 0;
+    try {
+      const last = await db.collectionCheckpoint.findFirst({
+        where: { job: { sourceId: ctx.sourceId }, cursor: { contains: "sitemapIdx" } },
+        orderBy: { createdAt: "desc" },
+      });
+      if (last) {
+        const cur = JSON.parse(last.cursor) as { sitemapIdx?: number; total?: number };
+        if (typeof cur.sitemapIdx === "number" && cur.total === targets.length) {
+          startIdx = cur.sitemapIdx >= targets.length ? 0 : cur.sitemapIdx; // hết sitemap → vòng lại đầu
+        }
+      }
+    } catch { startIdx = 0; }
+    await logJob(ctx.jobId, `Chế độ sitemap: ${targets.length} URL hồ sơ, cào tối đa ${budget} — bắt đầu từ vị trí ${startIdx + 1}${startIdx > 0 ? " (resume checkpoint vòng trước)" : ""}`);
+    let crawled = 0;
+    for (let i = startIdx; i < targets.length && crawled < budget; i++) {
       if (ctx.shouldStop && (await ctx.shouldStop())) {
         await logJob(ctx.jobId, `Dừng an toàn theo yêu cầu tại hồ sơ ${i + 1}`);
         break;
       }
+      crawled++;
       await sleep(delayMs);
       let res: Response;
       try {
@@ -282,15 +299,152 @@ export class WebPageAdapter implements CollectorAdapter {
       }
       const b = await res.text();
       await db.collectionCheckpoint.create({
-        data: { jobId: ctx.jobId, cursor: JSON.stringify({ url: targets[i], idx: i + 1 }), note: `Đã tải hồ sơ ${i + 1}` },
+        data: { jobId: ctx.jobId, cursor: JSON.stringify({ url: targets[i], idx: i + 1, sitemapIdx: i + 1, total: targets.length }), note: `Đã tải hồ sơ ${i + 1}` },
       });
       const extracted = extractCompaniesFromHtml(b, targets[i]);
       all.push(...extracted.rows);
-      await logJob(ctx.jobId, `Hồ sơ ${i + 1}/${Math.min(targets.length, budget)}: ${extracted.rows.length} bản ghi — tổng ${all.length}`);
+      await logJob(ctx.jobId, `Hồ sơ ${i + 1}/${Math.min(targets.length, startIdx + budget)}: ${extracted.rows.length} bản ghi — tổng ${all.length}`);
     }
     if (all.length === 0) {
       await logJob(ctx.jobId, `Sitemap không cho bản ghi nào — KHÔNG tạo dữ liệu thay thế.`);
     }
+    return all;
+  }
+}
+
+// ---------------- Adapter 3: HARVEST + ENRICH (Danh Bạ VN — SĐT + người liên lạc) ----------------
+
+/**
+ * Ngân hàng từ khóa tìm kiếm (dùng luân phiên qua checkpoint — mỗi vòng chạy tiếp từ vị trí trước).
+ * Từ khóa trung tính, phổ biến: tỉnh/thành + ngành nghề — KHÔNG nhắm dữ liệu cá nhân.
+ */
+export const DANHBA_QUERY_BANK: string[] = [
+  "cong ty", "cong ty tnhh", "cong ty co phan", "doanh nghiep", "cong ty tnhh mtv",
+  "xay dung", "van tai", "thuong mai", "du lich", "logistics", "kien truc",
+  "thiet ke", "in an", "may moc", "thuc pham", "det may", "go", "nhua",
+  "kim loai", "dien", "dien tu", "phan mem", "cong nghe thong tin", "giao duc",
+  "y te", "nha hang", "khach san", "ban le", "ban si", "xuat nhap khau",
+  "ha noi", "ho chi minh", "da nang", "hai phong", "can tho", "binh duong",
+  "dong nai", "khanh hoa", "quang ninh", "thanh hoa", "nghe an", "long an",
+  "cong ty ha noi", "cong ty ho chi minh", "cong ty da nang", "cong ty hai phong",
+  "tnhh xay dung", "tnhh thuong mai", "tnhh van tai", "co phan xay dung", "co phan cong nghe",
+  "doanh nghiep tnhh", "cong ty dich vu", "cong ty san xuat", "cong ty buon ban",
+  "hop tac xa", "truong", "ben vien", "cong ty duoc", "cong ty nong nghiep",
+];
+
+/**
+ * Adapter HARVEST+ENRICH cho Danh Bạ Việt Nam:
+ * 1) /api/search?q={tu khoa} (JSON công khai, robots cho phép) → tối đa 5 DN/query
+ *    có sẵn: MST, tên, người đại diện (representativeName), tỉnh, trạng thái, slug.
+ * 2) Với DN chưa có SĐT trong DB → mở hồ sơ /cong-ty/{slug} → trích SĐT + địa chỉ.
+ * Mỗi vòng chạy TIẾP từ vị trí checkpoint (resume) — không quét lại từ đầu.
+ * Ranh giới: 401/403/429 → dừng an toàn giữ phần đã lấy; KHÔNG né chống bot.
+ */
+export class DanhBaEnrichAdapter implements CollectorAdapter {
+  readonly name = "danhba-enrich";
+  canRun(accessPolicy: string): boolean {
+    return accessPolicy === "ALLOWED";
+  }
+  async collect(ctx: CollectorContext): Promise<ImportRow[]> {
+    if (!ctx.sourceUrl) throw new Error("Nguồn enrichment cần URL gốc");
+    const base = new URL(ctx.sourceUrl).origin;
+    const robots = await checkRobots(ctx.sourceUrl, ctx.fetchImpl ?? fetch);
+    if (robots.status === "RESTRICTED" || robots.status === "CHECK_FAILED") {
+      throw new Error(`Nguồn từ chối thu thập theo robots.txt — dừng an toàn: ${robots.note}`);
+    }
+    const delayMs = Math.max(0, Math.ceil(60000 / Math.max(1, ctx.rateLimitPerMin)));
+    const fetcher = ctx.fetchImpl ?? fetch;
+    const all: ImportRow[] = [];
+    const budget = Math.max(1, Math.min(ctx.maxPages, 80)); // trần request/vòng (search + hồ sơ)
+
+    // resume: đọc vị trí từ khóa + slug đã biết từ checkpoint nguồn này
+    let qStart = 0;
+    const slugByMst = new Map<string, string>();
+    try {
+      const last = await db.collectionCheckpoint.findFirst({
+        where: { job: { sourceId: ctx.sourceId }, cursor: { contains: "qIdx" } },
+        orderBy: { createdAt: "desc" },
+      });
+      if (last) {
+        const cur = JSON.parse(last.cursor) as { qIdx?: number; slugs?: [string, string][] };
+        if (typeof cur.qIdx === "number") qStart = cur.qIdx % DANHBA_QUERY_BANK.length;
+        for (const [m, s] of cur.slugs ?? []) slugByMst.set(m, s);
+      }
+    } catch { /* bỏ qua lỗi checkpoint — bắt đầu từ 0 */ }
+
+    // MST trong DB đã có SĐT → bỏ qua không enrich lại
+    const havePhone = new Set(
+      (
+        await db.contactPoint.findMany({ where: { type: "PHONE" }, select: { companyId: true } })
+      ).map((p) => p.companyId),
+    );
+    const companies = await db.company.findMany({ select: { id: true, taxCode: true } });
+    const idWithPhone = new Set(companies.filter((c) => havePhone.has(c.id)).map((c) => c.taxCode).filter(Boolean) as string[]);
+
+    const getJson = async (url: string): Promise<{ companies: { taxCode?: string; slug?: string; nameVi?: string; representativeName?: string; provinceName?: string; status?: string }[] } | null> => {
+      await sleep(delayMs);
+      const res = await fetcher(url, { signal: AbortSignal.timeout(ctx.requestTimeoutMs), redirect: "follow" });
+      if (res.status === 401 || res.status === 403 || res.status === 429) throw new Error(`Nguồn từ chối (HTTP ${res.status}) — dừng an toàn, giữ phần đã lấy`);
+      if (!res.ok) return null;
+      try { return JSON.parse(await res.text()); } catch { return null; }
+    };
+
+    let used = 0;
+    let qIdx = qStart;
+    const newSlugs: [string, string][] = [];
+    while (used < budget) {
+      const q = DANHBA_QUERY_BANK[qIdx % DANHBA_QUERY_BANK.length];
+      let data: Awaited<ReturnType<typeof getJson>> = null;
+      try {
+        data = await getJson(`${base}/api/search?q=${encodeURIComponent(q)}`);
+      } catch (e) {
+        await logJob(ctx.jobId, `Tìm kiếm "${q}" lỗi: ${e instanceof Error ? e.message : e} — dừng giữ phần đã lấy`);
+        break;
+      }
+      used++;
+      const cs = data?.companies ?? [];
+      for (const c of cs) {
+        if (c.taxCode && c.slug) {
+          slugByMst.set(c.taxCode, c.slug);
+          newSlugs.push([c.taxCode, c.slug]);
+        }
+        // harvest row: MST + tên + người đại diện + tỉnh + trạng thái (có sẵn trên API)
+        if (c.nameVi && (c.taxCode || c.representativeName)) {
+          const row: ImportRow = { name: String(c.nameVi).trim() };
+          if (c.taxCode) row.taxCode = String(c.taxCode).trim();
+          if (c.representativeName) row.contactName = String(c.representativeName).trim();
+          if (c.provinceName) row.province = String(c.provinceName).trim();
+          if (c.status) row.businessStatus = c.status === "ACTIVE" ? "Đang hoạt động" : String(c.status);
+          all.push(row);
+        }
+      }
+      // mở hồ sơ để lấy SĐT cho DN CHƯA có SĐT trong DB
+      for (const c of cs) {
+        if (used >= budget) break;
+        if (!c.taxCode || !c.slug || idWithPhone.has(c.taxCode)) continue;
+        await sleep(delayMs);
+        used++;
+        let res: Response;
+        try {
+          res = await fetcher(`${base}/cong-ty/${c.slug}`, { signal: AbortSignal.timeout(ctx.requestTimeoutMs), redirect: "follow" });
+        } catch {
+          continue;
+        }
+        if (res.status === 401 || res.status === 403 || res.status === 429) {
+          await logJob(ctx.jobId, `Nguồn từ chối (HTTP ${res.status}) tại hồ sơ ${c.slug} — dừng an toàn, giữ phần đã lấy`);
+          qIdx = (qIdx + 1) % DANHBA_QUERY_BANK.length;
+          await db.collectionCheckpoint.create({ data: { jobId: ctx.jobId, cursor: JSON.stringify({ qIdx, slugs: newSlugs.slice(-200) }), note: `Dừng an toàn sau ${used} request` } });
+          return all;
+        }
+        if (!res.ok) continue;
+        const extracted = extractCompaniesFromHtml(await res.text(), `${base}/cong-ty/${c.slug}`);
+        // profile row: recordKey riêng theo MST → vòng sau vẫn merge SĐT/người liên lạc mới vào DN có sẵn
+        for (const r of extracted.rows) all.push({ ...r, recordKey: `profile:${c.taxCode}:${c.slug}` });
+      }
+      await db.collectionCheckpoint.create({ data: { jobId: ctx.jobId, cursor: JSON.stringify({ qIdx: (qIdx + 1) % DANHBA_QUERY_BANK.length, slugs: newSlugs.slice(-200) }), note: `Hoàn tất từ khóa "${q}" — ${used} request` } });
+      qIdx = (qIdx + 1) % DANHBA_QUERY_BANK.length;
+    }
+    if (all.length === 0) await logJob(ctx.jobId, "Không thu được bản ghi nào từ adapter enrichment — không tạo dữ liệu thay thế.");
     return all;
   }
 }
@@ -316,6 +470,8 @@ export function getAdapterForSource(type: string): CollectorAdapter | null {
     case "OFFICIAL_API":
     case "OFFICIAL_REGISTRY":
       return new WebPageAdapter();
+    case "PHONE_ENRICHMENT":
+      return new DanhBaEnrichAdapter();
     default:
       return null;
   }

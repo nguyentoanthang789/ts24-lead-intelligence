@@ -17,7 +17,7 @@ import { TierBadge, StatusBadge, VerificationBadge } from "@/components/crm/badg
 import { LeadDetailSheet } from "@/components/crm/lead-detail";
 
 type CompanyRow = {
-  id: string; name: string; taxCode: string | null; province: string | null; sector: string | null;
+  id: string; name: string; taxCode: string | null; contactName: string | null; province: string | null; sector: string | null;
   priorityTier: string; outreachStatus: string; verificationStatus: string; updatedAt: string;
   contactPoints: { id: string; type: string; normalized: string }[];
   productFits: { productCode: string; fitScore: number }[];
@@ -125,6 +125,8 @@ export function LeadsView({ onOpenLead }: { onOpenLead?: (id: string) => void })
                 <TableRow>
                   <TableHead>Doanh nghiệp</TableHead>
                   <TableHead>MST</TableHead>
+                  <TableHead>Người liên lạc</TableHead>
+                  <TableHead>Điện thoại</TableHead>
                   <TableHead>Khu vực</TableHead>
                   <TableHead>Phù hợp nhất</TableHead>
                   <TableHead className="text-right">Điểm</TableHead>
@@ -141,6 +143,10 @@ export function LeadsView({ onOpenLead }: { onOpenLead?: (id: string) => void })
                       <div className="text-xs text-muted-foreground">{c.sector ?? "Chưa rõ ngành"} · {c.sourceRecords[0]?.source.name ?? "—"}</div>
                     </TableCell>
                     <TableCell className="font-mono text-xs">{c.taxCode ?? "—"}</TableCell>
+                    <TableCell className="text-xs">{c.contactName ?? "—"}</TableCell>
+                    <TableCell className="font-mono text-xs">
+                      {c.contactPoints.filter((p) => p.type === "PHONE")[0]?.normalized ?? "—"}
+                    </TableCell>
                     <TableCell>{c.province ?? "—"}</TableCell>
                     <TableCell>
                       {c.productFits[0] ? (

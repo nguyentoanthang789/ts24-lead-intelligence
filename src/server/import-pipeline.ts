@@ -7,7 +7,7 @@ import { db } from "@/lib/db";
 import {
   normalizeTaxCode, normalizePhoneVN, normalizeEmail, normalizeDomain,
   normalizeProvince, normalizeSector, buildNameKey, isValidTaxCode,
-  missingRecommendedFields, NormalizedCompany,
+  missingRecommendedFields, NormalizedCompany, cleanContactName,
 } from "./normalization";
 import { matchCompany, needsManualReview, buildSourceDedupKey, DedupCandidate } from "./dedup";
 import { scoreLead } from "./scoring";
@@ -20,13 +20,14 @@ export type ImportRow = Record<string, string>;
 export const FIELD_ALIASES: Record<string, string[]> = {
   name: ["name", "ten_doanh_nghiep", "ten", "company_name", "ten_cong_ty", "companyname"],
   taxCode: ["taxCode", "taxcode", "ma_so_thue", "mst", "tax_code", "masothue"],
-  phone: ["phone", "dien_thoai", "so_dien_thoai", "hotline", "sdt", "telephone"],
+  contactName: ["contactName", "contactname", "contact_name", "contact_person", "nguoi_lien_lac", "nguoi_dai_dien", "nguoi_dai_dien_phap_luat", "nguoi_ddpl", "nguoi_dai_dien_theo_phap_luat", "nguoi_dung_dau"],
+  phone: ["phone", "dien_thoai", "so_dien_thoai", "hotline", "sdt", "telephone", "so_dt", "dt", "tel", "so_dien_thoai_lien_he", "dien_thoai_lien_he"],
   email: ["email", "thu_dien_tu", "email_cong_ty"],
   website: ["website", "website_url", "url", "site", "domain"],
   province: ["province", "tinh", "tinh_thanh", "tinh_thanh_pho", "city", "dia_chi_tinh"],
   address: ["address", "dia_chi", "address_full"],
   sector: ["sector", "nganh_nghe", "nganh", "industry", "linh_vuc", "nganh_kinh_doanh"],
-  businessStatus: ["business_status", "trang_thai", "trang_thai_hoat_dong", "status"],
+  businessStatus: ["business_status", "trang_thai", "trang_thai_hoat_dong", "tinh_trang", "status"],
   establishedYear: ["established_year", "nam_thanh_lap", "founding_year", "year"],
   sizeSignal: ["size", "quy_mo", "so_lao_dong", "employees", "size_signal"],
 };
@@ -74,6 +75,15 @@ export function normalizeRow(row: ImportRow): { normalized: NormalizedCompany; i
     else if (s.includes("ngung") || s.includes("giai the") || s.includes("inactive") || s.includes("dong")) businessStatus = "INACTIVE";
   }
   const name = rawName ?? "";
+  const contactName = cleanContactName(pickField(row, "contactName"));
+  // CHỐNG nhầm MST thành SĐT: MST (kể cả dạng 84-prefix bỏ số 0 đầu) không bao giờ là SĐT
+  const phonesCleaned = phones.filter((p) => {
+    const digits = p.replace(/\D/g, "");
+    if (!taxCode) return true;
+    const mst = taxCode.replace(/\D/g, "");
+    const mstNo0 = mst.replace(/^0/, "");
+    return digits !== mst && digits !== mstNo0 && digits !== `84${mstNo0}`;
+  });
   return {
     invalidTaxCode,
     normalized: {
@@ -81,13 +91,14 @@ export function normalizeRow(row: ImportRow): { normalized: NormalizedCompany; i
       rawName,
       nameKey: buildNameKey(rawName),
       taxCode,
+      contactName,
       province: normalizeProvince(pickField(row, "province")),
       address: pickField(row, "address"),
       website: domain ? websiteRaw : null,
       domain,
       sector: normalizeSector(pickField(row, "sector")),
       businessStatus,
-      phones,
+      phones: phonesCleaned,
       emails,
     },
   };
@@ -176,7 +187,9 @@ export async function processRecords(input: {
         continue;
       }
 
-      const dedupKey = buildSourceDedupKey(normalized);
+      const dedupKey = typeof row.recordKey === "string" && row.recordKey
+        ? row.recordKey // bản ghi enrichment có key riêng — cho phép re-merge thông tin mới vào DN có sẵn
+        : buildSourceDedupKey(normalized);
 
       // chống trùng: trong DB (pre-load) + trong cùng đợt (Set cộng dồn)
       if (dedupKey && existingKeys.has(dedupKey)) {
@@ -191,7 +204,7 @@ export async function processRecords(input: {
         where: normalized.taxCode
           ? { OR: [{ taxCode: normalized.taxCode }, { nameKey: normalized.nameKey ?? "___" }] }
           : { OR: [{ domain: normalized.domain ?? "___" }, { nameKey: normalized.nameKey ?? "___" }] },
-        select: { id: true, taxCode: true, domain: true, province: true, nameKey: true, taxCodeStatus: true, contactPoints: { where: { type: "PHONE" }, select: { normalized: true } } },
+        select: { id: true, taxCode: true, domain: true, province: true, nameKey: true, taxCodeStatus: true, contactName: true, contactPoints: { where: { type: "PHONE" }, select: { normalized: true } } },
         take: 50,
       });
       const cands: DedupCandidate[] = rows.map((c) => ({
@@ -237,6 +250,7 @@ export async function processRecords(input: {
           }
           const updates: Record<string, string> = {};
           if (!existing.taxCode && normalized.taxCode) updates.taxCode = normalized.taxCode;
+          if (!existing.contactName && normalized.contactName) updates.contactName = normalized.contactName;
           if (!existing.domain && normalized.domain) updates.domain = normalized.domain;
           if (!existing.sector && normalized.sector) updates.sector = normalized.sector;
           if (!existing.province && normalized.province) updates.province = normalized.province;
@@ -254,6 +268,7 @@ export async function processRecords(input: {
             nameKey: normalized.nameKey,
             taxCode: normalized.taxCode,
             taxCodeStatus: normalized.taxCode && isValidTaxCode(normalized.taxCode) ? "VERIFIED" : "UNVERIFIED",
+            contactName: normalized.contactName,
             province: normalized.province,
             address: normalized.address,
             website: normalized.website,

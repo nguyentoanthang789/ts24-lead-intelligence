@@ -20,7 +20,7 @@ import { api, fmtDate, EVENT_LABELS, PRODUCT_NAMES, ZALO_WEB_URL } from "@/lib/c
 import { TierBadge, StatusBadge, VerificationBadge, ConfidenceBadge } from "@/components/crm/badges";
 
 type CompanyDetail = {
-  id: string; name: string; rawName: string | null; taxCode: string | null; taxCodeStatus: string;
+  id: string; name: string; rawName: string | null; taxCode: string | null; taxCodeStatus: string; contactName: string | null;
   province: string | null; address: string | null; website: string | null; domain: string | null;
   sector: string | null; businessStatus: string; sizeSignal: string | null; establishedYear: number | null;
   verificationStatus: string; priorityTier: string; outreachStatus: string; internalNotes: string | null;
@@ -206,6 +206,7 @@ function ProfileTab({ company: c, onSaved }: { company: CompanyDetail; onSaved: 
       <div className="grid grid-cols-2 gap-2">
         <InfoRow label="Tên gốc (raw)" value={c.rawName ?? "—"} />
         <InfoRow label="Mã số thuế" value={c.taxCode ? `${c.taxCode} (${c.taxCodeStatus === "VERIFIED" ? "checksum hợp lệ" : "chưa xác minh"})` : "—"} />
+        <InfoRow label="Người liên lạc" value={c.contactName ?? "—"} />
         <InfoRow label="Tỉnh/Thành" value={c.province ?? "—"} />
         <InfoRow label="Ngành nghề" value={c.sector ?? "—"} />
         <InfoRow label="Website" value={c.website ?? "—"} />

@@ -172,7 +172,7 @@ describe("verticalStrictField (chế độ nghiêm)", () => {
     // "ten" alias ngắn — KHÔNG dùng substring trong chế độ nghiêm
     expect(verticalStrictField("Tên giao dịch quốc tế")).toBeNull();
     expect(verticalStrictField("Tên viết tắt")).toBeNull();
-    expect(verticalStrictField("Người đại diện pháp luật")).toBeNull();
+    expect(verticalStrictField("Người đại diện pháp luật")).toBe("contactName"); // mới: nhãn người đại diện → contactName
   });
 });
 
@@ -321,5 +321,122 @@ describe("extractCompaniesFromHtml — thứ tự ưu tiên mới", () => {
     </table></body></html>`;
     const r = extractCompaniesFromHtml(html, "https://x.vn/");
     expect(r.rows.length).toBe(0);
+  });
+});
+
+// ==================== NGƯỜI LIÊN LẠC + THẺ DANH BẠ + SĐT (Task 12) ====================
+import {
+  extractContactName,
+  extractDirectoryCards,
+  extractHeadingName,
+  cleanCompanyName,
+  verticalProfileFromGrid,
+} from "../../src/server/extract";
+import { normalizeRow } from "../../src/server/import-pipeline";
+
+describe("extractContactName (tên người liên lạc)", () => {
+  test("bắt 'Người đại diện theo pháp luật là X'", () => {
+    expect(extractContactName("Người đại diện theo pháp luật là Hà Quốc Kiệt. Ngành nghề")).toBe("Hà Quốc Kiệt");
+  });
+  test("bắt 'Người đại diện: X' ngay trước nhãn 'Địa chỉ' trong cùng dòng", () => {
+    expect(extractContactName("Mã số thuế: 5900941908 Người đại diện: Nguyễn Thị Ngoan Địa chỉ: 96 Nguyễn Thái Học")).toBe("Nguyễn Thị Ngoan");
+  });
+  test("bắt 'Người ĐDPL: X'", () => {
+    expect(extractContactName("Người ĐDPL: Trần Thị Thúy Nhạn")).toBe("Trần Thị Thúy Nhạn");
+  });
+  test("từ chối khi không có nhãn người đại diện", () => {
+    expect(extractContactName("Địa chỉ: 96 Nguyễn Thái Học, Pleiku")).toBeNull();
+  });
+});
+
+describe("extractDirectoryCards (thẻ .tc-item tracuumst)", () => {
+  const html = `<div class="tc-list">
+    <div class="tc-item">
+      <div class="tc-item__name"><a href="/a">Công Ty TNHH ABC</a></div>
+      <p class="tc-item__row"><span>Mã số thuế: <a><strong>5900941908</strong></a></span></p>
+      <p class="tc-item__row"><span>Người đại diện: Nguyễn Thị Ngoan</span></p>
+      <p class="tc-item__row"><span>Địa chỉ: 96 Nguyễn Thái Học, Pleiku, Việt Nam</span></p>
+    </div>
+    <div class="tc-item">
+      <div class="tc-item__name"><a href="/b">Công Ty TNHH XYZ</a></div>
+      <p class="tc-item__row"><span>Mã số thuế: <a><strong>5900942468</strong></a></span></p>
+      <p class="tc-item__row"><span>Người đại diện: Nguyễn Duy Hải</span></p>
+      <p class="tc-item__row"><span>Địa chỉ: 63 Trường Chinh, Pleiku, Việt Nam</span></p>
+    </div>
+  </div>`;
+  test("mỗi thẻ → 1 row đầy đủ tên + MST + người liên lạc + địa chỉ", () => {
+    const rows = extractDirectoryCards(html);
+    expect(rows.length).toBe(2);
+    expect(rows[0]).toEqual({ name: "Công Ty TNHH ABC", taxCode: "5900941908", contactName: "Nguyễn Thị Ngoan", address: "96 Nguyễn Thái Học, Pleiku, Việt Nam" });
+    expect(rows[1].contactName).toBe("Nguyễn Duy Hải");
+  });
+  test("giá trị KHÔNG tràn qua nhãn khác (không dán 'Địa chỉ' vào tên người)", () => {
+    const rows = extractDirectoryCards(html);
+    expect(rows[0].contactName!.includes("Địa chỉ")).toBe(false);
+    expect(rows[0].address!.startsWith("96 ")).toBe(true);
+  });
+  test("thẻ thiếu cả MST lẫn người liên lạc → bỏ, không bịa", () => {
+    const html2 = html.replace("Mã số thuế: <a><strong>5900941908</strong></a>", "").replace("Người đại diện: Nguyễn Thị Ngoan", "");
+    const rows = extractDirectoryCards(html2);
+    expect(rows.length).toBe(1);
+    expect(rows[0].name).toBe("Công Ty TNHH XYZ");
+  });
+});
+
+describe("extractHeadingName dạng 'MST - Tên' (tracuumst)", () => {
+  test("h1 '0105787514 - Trường ...' → MST + tên (không cần từ khóa DN khi có MST)", () => {
+    const head = extractHeadingName("<h1>0105787514 - Trường Tiểu Học Đa Trí Tuệ</h1>");
+    expect(head).not.toBeNull();
+    expect(head!.taxCode).toBe("0105787514");
+    expect(head!.name).toBe("Trường Tiểu Học Đa Trí Tuệ");
+  });
+  test("h1 'CÔNG TY FPT - MST 0101248141 | Trang' → tên sạch", () => {
+    const head = extractHeadingName("<h1>CÔNG TY CỔ PHẦN FPT - MST 0101248141 | TracuuMST</h1>");
+    expect(head!.name).toBe("CÔNG TY CỔ PHẦN FPT");
+    expect(head!.taxCode).toBe("0101248141");
+  });
+  test("không có MST và không phải tên DN → từ chối", () => {
+    expect(extractHeadingName("<h1>Câu hỏi thường gặp về thuế</h1>")).toBeNull();
+  });
+});
+
+describe("cleanCompanyName mở rộng", () => {
+  test("cắt đuôi '- MST xxx' (không dấu hai chấm)", () => {
+    expect(cleanCompanyName("CÔNG TY CỔ PHẦN SỮA VIỆT NAM - MST 0300588569")).toBe("CÔNG TY CỔ PHẦN SỮA VIỆT NAM");
+  });
+  test("cắt đuôi 'MST: xxx Đang HĐ'", () => {
+    expect(cleanCompanyName("CÔNG TY CỔ PHẦN FPT MST: 0101248141 Đang HĐ")).toBe("CÔNG TY CỔ PHẦN FPT");
+  });
+});
+
+describe("verticalProfileFromGrid — name/address chỉ lấy cell đầu", () => {
+  test("tên không dán thêm shortName/tỉnh/người đại diện", () => {
+    const grid = [
+      ["Tên doanh nghiệp", "CÔNG TY TNHH AN KHANG", "ANKHANG MED", "Thành phố Hồ Chí Minh", "PHẠM THU HƯƠNG"],
+      ["Mã số thuế", "0315239874"],
+      ["Người đại diện pháp luật", "PHẠM THU HƯƠNG"],
+      ["Tình trạng", "Đang hoạt động"],
+    ];
+    const row = verticalProfileFromGrid(grid)!;
+    expect(row.name).toBe("CÔNG TY TNHH AN KHANG");
+    expect(row.contactName).toBe("PHẠM THU HƯƠNG");
+    expect(row.businessStatus).toBe("Đang hoạt động");
+  });
+});
+
+describe("normalizeRow — chống nhầm MST thành SĐT", () => {
+  test("bỏ SĐT trùng MST (kể cả dạng 84-prefix bỏ số 0 đầu)", () => {
+    const { normalized } = normalizeRow({ name: "CÔNG TY A", taxCode: "0300588569", phone: "0300588569; 02854155555" });
+    expect(normalized.phones).toEqual(["842854155555"]);
+  });
+  test("giữ SĐT thật khác MST", () => {
+    const { normalized } = normalizeRow({ name: "CÔNG TY A", taxCode: "0109554321", phone: "0977889900" });
+    expect(normalized.phones).toEqual(["84977889900"]);
+  });
+  test("contactName được làm sạch: chặn số/email trong tên người", () => {
+    const { normalized } = normalizeRow({ name: "CÔNG TY A", contactName: "Nguyễn Văn 0987" });
+    expect(normalized.contactName).toBeNull();
+    const ok = normalizeRow({ name: "CÔNG TY A", contactName: "Trần Thị B" });
+    expect(ok.normalized.contactName).toBe("Trần Thị B");
   });
 });

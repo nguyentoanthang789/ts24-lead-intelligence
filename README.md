@@ -225,18 +225,26 @@ Nghĩa là với nguồn danh bạ thông thường, **nút thắt là tốc đ�
 
 | Nguồn | Loại | Robots | Dữ liệu | Số lượng |
 |---|---|---|---|---|
-| Danh Bạ Việt Nam — sitemap hồ sơ | `PUBLIC_DIRECTORY` | `Allow: /` (chỉ cấm `/admin/`) | MST, tên, địa chỉ, SĐT, website + trạng thái | toàn bộ hồ sơ trên sitemap |
+| TracuuMST — sitemap hồ sơ mã số thuế | `PUBLIC_DIRECTORY` | chỉ cấm `/tim-kiem`, `/search`, `/ajax/` — hồ sơ CHO PHÉP | **MST, tên, người đại diện (Người ĐDPL), địa chỉ, ngành, tình trạng hoạt động** | **45.000 hồ sơ** trên sitemap, quét tiếp tục qua checkpoint |
+| Danh Bạ Việt Nam — sitemap hồ sơ | `PUBLIC_DIRECTORY` | `Allow: /` (chỉ cấm `/admin/`) | MST, tên, địa chỉ, **SĐT**, website + trạng thái | toàn bộ hồ sơ trên sitemap |
+| Danh Bạ Việt Nam — harvest + làm giàu SĐT | `PHONE_ENRICHMENT` | cho phép `/api/search` + `/cong-ty/*` | **SĐT công khai, người đại diện, tỉnh, trạng thái** | ~20 từ khóa/vòng × 5 DN + mở hồ sơ lấy SĐT |
 | Danh Bạ Việt Nam — API tìm kiếm | `OFFICIAL_API` | cho phép `/api/search` | JSON: MST, tên, tỉnh, trạng thái | 5 kết quả/lần chạy |
 | EuroCham Việt Nam — thành viên | `PUBLIC_DIRECTORY` | không có robots.txt (404) | tên + email liên hệ công khai | ~1.100+ DN, 25 trang |
 
-Kết quả thật: **~1.160 lead thật** vào DB sau vài vòng (khử trùng lặp tự động giữa các vòng — nguồn cập nhật thì lead mới tự chảy vào).
+Kết quả thật sau lần cào đầu (28/10/2026): **~3.700 lead thật** — trong đó **2.500+ có MST**, **1.600+ có tên người liên lạc/người đại diện**, SĐT thật (kiểu 09xx/024xx/028xx) chảy về mỗi vòng từ hồ sơ Danh Bạ Việt Nam. Khử trùng lặp tự động giữa các vòng — nguồn cập nhật thì lead mới tự chảy vào.
+
+### 9.4.1. Ba trường "MST · Người liên lạc · SĐT" đến từ đâu
+
+- **MST + tên người liên lạc**: bảng hồ sơ dọc của TracuuMST (nhãn "Mã số thuế", "Người ĐDPL", "Tình trạng", "Lĩnh vực") + thẻ `.tc-item` (danh sách DN liên quan cuối trang, mỗi trang cho ~10 hồ sơ thêm). Tham chiếu nhãn nằm trong `FIELD_ALIASES` (`contactName`: người đại diện/người ĐDPL/người liên lạc...).
+- **SĐT**: chỉ lấy từ nơi công bố công khai rõ ràng (hồ sơ Danh Bạ Việt Nam — "Số điện thoại liên hệ"). Số bị che `***` → bộ làm sạch chỉ giữ số thật; **SĐT trùng MST của chính công ty (kể cả dạng +84) bị xóa** — đã dọn 7 SĐT rác từ vòng cào cũ.
+- Mọi trường đều **có trong DB và UI**: bảng Lead Explorer hiển thị cột MST · Người liên lạc · Điện thoại; chi tiết lead có dòng "Người liên lạc".
 
 **Nâng cấp extractor phục vụ các nguồn trên** (`src/server/extract.ts`):
 
 - **Bảng hồ sơ dọc** (`verticalProfileFromGrid`): trang chi tiết DN dạng "Mã số thuế \| giá trị" từng dòng → 1 record; nhận tên từ `<h1>` (tách "Tên - MST xxx" → tên + MST).
 - **Cặp div data-row** (`verticalProfileFromDataRows`): kiểu `data-row-heading`/`data-row-value` (hồ sơ EuroCham).
 - **Thẻ thành viên data-mail** (`extractMembersWithDataMail`): danh bạ gắn email trên thuộc tính `data-mail` → tên + email.
-- **Chế độ sitemap** trong WebPageAdapter: nguồn trỏ thẳng tới `sitemap.xml` → đọc `sitemapindex`/`urlset` → cào TỪNG trang hồ sơ với nhịp rateLimit tới `maxPagesPerSource`, dừng an toàn khi nguồn 401/403/429.
+- **Chế độ sitemap** trong WebPageAdapter: nguồn trỏ thẳng tới `sitemap.xml` → đọc `sitemapindex`/`urlset` → cào TỪNG trang hồ sơ với nhịp rateLimit tới `maxPagesPerSource`, dừng an toàn khi nguồn 401/403/429. **Checkpoint resume**: mỗi vòng liên tục đi TIẾP vào sitemap từ vị trí lần trước (hết 45k URL thì vòng lại đầu — nhặt hồ sơ mới thêm).
 - **Cổng chất lượng tên**: chặn tên rác (URL, câu hỏi FAQ, nhãn "Số điện thoại..."), cắt đuôi "MST: xxx" khỏi tên, xóa SĐT bị nhầm = MST — không để dữ liệu bẩn vào pipeline.
 
 Kịch bản khởi động lại nguồn + cào ngay: `bun scripts/activate-and-crawl.ts` (kiểm robots từng nguồn trước khi bật — nguồn không cho phép thì không bật).

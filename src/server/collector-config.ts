@@ -24,7 +24,7 @@ export const DEFAULT_COLLECTOR_CONFIG: CollectorConfig = {
 };
 
 export const MIN_MAX_PAGES = 1;
-export const MAX_MAX_PAGES = 100;
+export const MAX_MAX_PAGES = 1000; // nguồn sitemap lớn (45k URL hồ sơ) cần đi sâu nhiều vòng
 export const MIN_CONCURRENCY = 1;
 export const MAX_CONCURRENCY = 8;
 export const MIN_TIMEOUT_MS = 5000;

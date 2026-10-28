@@ -65,8 +65,8 @@ export function CollectorSpeedCard() {
           <>
             <div className="grid gap-3 sm:grid-cols-3">
               <div className="space-y-1">
-                <Label className="text-xs">Số trang đi sâu mỗi nguồn (1–100)</Label>
-                <Input type="number" min={1} max={100} value={cfg.maxPagesPerSource}
+                <Label className="text-xs">Số trang đi sâu mỗi nguồn (1–1000)</Label>
+                <Input type="number" min={1} max={1000} value={cfg.maxPagesPerSource}
                   onChange={(e) => setCfg({ ...cfg, maxPagesPerSource: parseInt(e.target.value || "1", 10) })} />
                 <p className="text-[11px] text-muted-foreground">Mỗi trang lấy được cả chục lead → nhân số lead/vòng</p>
               </div>

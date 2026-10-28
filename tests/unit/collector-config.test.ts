@@ -10,11 +10,12 @@ import {
 } from "../../src/server/collector-config";
 
 describe("normalize biên", () => {
-  test("maxPagesPerSource 1..100", () => {
+  test("maxPagesPerSource 1..1000 (nguồn sitemap lớn cần đi sâu)", () => {
     expect(normalizeMaxPages(1)).toBe(1);
     expect(normalizeMaxPages(100)).toBe(100);
+    expect(normalizeMaxPages(1000)).toBe(1000);
     expect(normalizeMaxPages(0)).toBe(null);
-    expect(normalizeMaxPages(101)).toBe(null);
+    expect(normalizeMaxPages(1001)).toBe(null);
     expect(normalizeMaxPages("25")).toBe(25);
     expect(normalizeMaxPages(undefined)).toBe(null);
   });

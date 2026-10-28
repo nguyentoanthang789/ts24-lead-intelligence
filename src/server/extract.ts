@@ -87,6 +87,15 @@ export const COMPANY_KEYWORDS = [
 
 const TAX_KEYWORD_RE = /(?:mst|ma[_\s]*so[_\s]*thue|tax[_\s]*code|taxcode|gpkd|giay[_\s]*phep[_\s]*kinh[_\s]*doanh|vat[_\s]*code|ma[_\s]*so[_\s]*dn|tax[_\s]*id|fiscal[_\s]*code)[^0-9]{0,12}(\d{10}(?:-\d{3})?|\d{13})/gi;
 
+// Tên người liên lạc / người đại diện trong văn bản: "Người đại diện theo pháp luật là Nguyễn Văn A",
+// "Người đại diện: Trần Thị B", "Người ĐDPL: Lê Văn C" — bắt trên bản có dấu,
+// sau đó làm sạch + chống nhãn tràn vào (dừng trước nhãn khác/SĐT/MST).
+const CONTACT_NAME_RE = /người\s*(?:đại\s*diện|đdpl|dại\s*diện)\s*(?:theo\s*pháp\s*luật)?\s*(?:là|:|-|–)?\s*([A-Za-zÀ-ỹĐđ][A-Za-zÀ-ỹĐđ\s.]{1,60})/i;
+// CHÚ Ý: \b trong JS chỉ nhìn \w ASCII — "ỉ/ọ/ị" không phải \w nên \b SAU nhãn
+// tiếng Việt luôn fail. Dùng lookahead "không phải chữ" thay thế.
+const CONTACT_LABEL_TAIL_RE = /^(địa\s*chỉ|mã\s*số\s*thuế|mst|điện\s*thoại|sđt|email|ngành|tình\s*trạng|tên\s*đơn\s*vị)$/i;
+const CONTACT_STOP_RE = /\s+(?:địa\s*chỉ|mã\s*số\s*thuế|mst\b|điện\s*thoại|sđt|email|ngành|tình\s*trạng)(?=\s|:|$)/i;
+
 const TAX_STANDALONE_RE = /\b(\d{10}-\d{3}|\d{13})\b/g;
 const PHONE_RE = /(?:\+84|84)?0\d{8,10}\b/g;
 const EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
@@ -112,6 +121,33 @@ function looksLikeCompany(text: string): boolean {
 
 function uniq<T>(arr: T[]): T[] {
   return [...new Set(arr)];
+}
+
+/**
+ * Bắt tên người đại diện/người liên lạc từ dòng văn bản (nếu có).
+ * Trả về tên đã làm sạch hoặc null — KHÔNG suy diễn khi không khớp rõ.
+ */
+export function extractContactName(text: string): string | null {
+  const m = CONTACT_NAME_RE.exec(text);
+  if (!m) return null;
+  let name = m[1].replace(/\s{2,}/g, " ").trim();
+  // cắt khi đụng nhãn kế tiếp trong cùng dòng ("Người đại diện: A Địa chỉ: X")
+  const stop = CONTACT_STOP_RE.exec(name);
+  if (stop) name = name.slice(0, stop.index).trim();
+  // mỗi từ ≥ 1 ký tự, không phải nhãn — chặn "Người đại diện: tra cứu"
+  const words = name.split(" ").filter(Boolean);
+  if (words.length < 2 || words.length > 6) return null;
+  if (words.some((w) => CONTACT_LABEL_TAIL_RE.test(w))) return null;
+  return cleanContactNameField(name);
+}
+
+function cleanContactNameField(s: string): string {
+  return s
+    .replace(/^[\s\-–—:;,]+/, "")
+    .replace(/[\s\-–—:;,.]+$/, "") // dấu chấm cuối là kết câu, không thuộc tên người
+    .replace(/\s{2,}/g, " ")
+    .trim()
+    .slice(0, 80);
 }
 
 // ---------------- Bảng HTML → rows ----------------
@@ -243,12 +279,14 @@ export function extractCompaniesFromText(text: string, maxRows = 2000): ImportRo
       const st = context.match(TAX_STANDALONE_RE);
       if (st && st.length === 1) taxCode = st[0]; // chỉ nhận khi duy nhất — tránh lấy nhầm số khác
     }
+    const contactName = extractContactName(context); // "Người đại diện..." → tên người liên lạc
     const phones = uniq((context.match(PHONE_RE) ?? []).map((p) => p.trim())).slice(0, 3);
     const emails = uniq((context.match(EMAIL_RE) ?? []).map((e) => e.trim())).slice(0, 3);
     const web = (context.match(WEBSITE_RE) ?? [])[0];
     if (!taxCode && phones.length === 0 && emails.length === 0) continue; // không đủ dữ liệu liên hệ — bỏ
     const obj: ImportRow = { name };
     if (taxCode) obj.taxCode = taxCode;
+    if (contactName) obj.contactName = contactName;
     if (phones.length) obj.phone = phones.join("; ");
     if (emails.length) obj.email = emails.join("; ");
     if (web) obj.website = web;
@@ -375,6 +413,9 @@ export function verticalStrictField(raw: string): string | null {
 /** Tỷ lệ dòng nhãn-hợp-le tối thiểu để coi bảng là hồ sơ dọc */
 const VERTICAL_MIN_HITS = 3;
 
+/** Nhãn giao diện trang hay tràn vào giá trị hồ sơ — loại bỏ, KHÔNG phải dữ liệu DN */
+const UI_LABEL_PARTS = /^(thong tin xuat hoa don|thong tin ma so thue|sao chep( tat ca| ma so thue)?|mo trang goc|hien so|tra cuu ho so sdt)$/;
+
 /** Bảng dọc kiểu "Mã số thuế | 0101248141" → 1 record (name có thể điền sau từ h1) */
 export function verticalProfileFromGrid(grid: string[][]): ImportRow | null {
   if (grid.length < VERTICAL_MIN_HITS) return null;
@@ -390,8 +431,15 @@ export function verticalProfileFromGrid(grid: string[][]): ImportRow | null {
     if (row.length < 2) continue;
     const f = verticalStrictField(row[0]);
     if (!f) continue;
-    const v = row.slice(1).filter(Boolean).join("; ").trim();
+    // loại phần nhãn UI tràn vào giá trị (độc lập hoặc dính trong cell); địa chỉ CHỈ nhận giá trị đầu (địa chỉ mới thắng địa chỉ cũ)
+    const parts = row.slice(1).filter(Boolean).map((p) => p.trim())
+      .map((p) => p.replace(/\s*(?:Thông tin xuất hóa đơn|Thông tin mã số thuế|Sao chép mã số thuế|Sao chép tất cả|Sao chép|Mở trang gốc|Hiện số)\s*/gi, " ").replace(/\s{2,}/g, " ").trim())
+      .filter((p) => p && !UI_LABEL_PARTS.test(deaccent(p)));
+    // tên + địa chỉ: CHỈ ô đầu tiên trong hàng (né dán thêm shortName/tỉnh/người đại diện;
+    // địa chỉ mới thắng địa chỉ cũ). Trường khác (SĐT, email...) ghép nhiều ô.
+    const v = (f === "name" || f === "address") ? (parts[0] ?? "") : parts.join("; ").trim();
     if (!v) continue;
+    if (f === "name" && obj.name) continue;
     obj[f] = obj[f] ? `${obj[f]}; ${v}` : v;
   }
   return Object.keys(obj).length >= 2 ? obj : null;
@@ -450,7 +498,9 @@ export function extractMembersWithDataMail(html: string, maxRows = 2000): Import
   return rows;
 }
 
-/** H1/tiêu đề trang hồ sơ: "CÔNG TY CỔ PHẦN FPT - MST 0101248141 | ..." → tên + MST */
+/** H1/tiêu đề trang hồ sơ: "CÔNG TY CỔ PHẦN FPT - MST 0101248141 | ..." hoặc
+ *  "0101248141 - CÔNG TY FPT | ..." → tên + MST. Tên không cần từ khóa DN khi
+ *  tiêu đề kèm MST (trang hồ sơ xác định DN theo MST — trường học, HTX... vẫn hợp lệ). */
 export function extractHeadingName(html: string): { name: string; taxCode: string } | null {
   const h1 = /<h1\b[^>]*>([\s\S]*?)<\/h1>/i.exec(html)?.[1];
   let text = h1 ? decodeEntities(stripTags(h1)).replace(/\s+/g, " ").trim() : "";
@@ -461,13 +511,22 @@ export function extractHeadingName(html: string): { name: string; taxCode: strin
   if (!text) return null;
   let s = text.split("|")[0].trim();
   let taxCode = "";
+  // dạng 1: "Tên - MST 0101248141"
   const mM = /[-–—]\s*MST\s*:?\s*(\d{10}(?:-\d{3})?|\d{13})/i.exec(s);
   if (mM) {
     taxCode = mM[1];
     s = s.slice(0, mM.index).trim();
   }
+  // dạng 2: "0101248141 - Tên" (tracuumst)
+  const pM = /^(\d{10}(?:-\d{3})?|\d{13})\s*[-–—]\s*/.exec(s);
+  if (pM) {
+    taxCode = taxCode || pM[1];
+    s = s.slice(pM[0].length).trim();
+  }
   const name = s.replace(/[\s\-–—]+$/, "").trim();
-  if (!name || !looksLikeCompany(name)) return null;
+  if (!name || !isPlausibleName(name)) return null;
+  // không có MST → cần dấu hiệu DN rõ; có MST → tên hiển thị trên trang hồ sơ là đủ
+  if (!taxCode && !looksLikeCompany(name)) return null;
   return { name, taxCode };
 }
 
@@ -495,11 +554,60 @@ export function isPlausibleName(n: string): boolean {
   return true;
 }
 
-/** Cắt đuôi "MST: 0108945612 Đang HĐ" khỏi tên — MST là trường riêng, không nằm trong tên */
+/** Cắt đuôi "MST: 0108945612 Đang HĐ" / "- MST 0108945612" khỏi tên — MST là trường riêng, không nằm trong tên */
 export function cleanCompanyName(n: string): string {
-  const mM = /\s*MST\s*:\s*\d{10}(?:-\d{3})?[\s\S]*$/i.exec(n);
+  const mM = /\s*(?:[-–—]\s*)?MST\s*:?\s*\d{10}(?:-\d{3})?[\s\S]*$/i.exec(n);
   if (mM) return n.slice(0, mM.index).replace(/[\s\-–—]+$/, "").trim();
   return n.trim();
+}
+
+/**
+ * Thẻ danh bạ kiểu tracuumst (.tc-item): 1 khối div = 1 DN với tên + MST +
+ * Người đại diện + Địa chỉ — cấu trúc lặp nên parse bằng khối, KHÔNG bịa
+ * trường thiếu. Trả về tối đa maxRows thẻ hợp lệ.
+ */
+export function extractDirectoryCards(html: string, maxRows = 500): ImportRow[] {
+  const rows: ImportRow[] = [];
+  const seen = new Set<string>();
+  // ranh giới khối: mở đầu bằng tc-item__name, kết thúc trước tc-item__name kế
+  const re = /<div\s+class="tc-item__name"[^>]*>([\s\S]*?)<\/div>([\s\S]*?)(?=<div\s+class="tc-item__name"|<\/div>\s*<\/div>\s*$)/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) !== null && rows.length < maxRows) {
+    const name = cleanName(decodeEntities(stripTags(m[1])).replace(/\s+/g, " ").trim());
+    if (!name || !isPlausibleName(name)) continue;
+    // parse TỪNG hàng nhãn riêng (<p class="tc-item__row">) — giá trị không tràn qua nhãn khác
+    const rowRe = /<p\s+class="tc-item__row"[^>]*>([\s\S]*?)<\/p>/gi;
+    let taxCode = "";
+    let contactName: string | null = null;
+    let address = "";
+    let rm: RegExpExecArray | null;
+    while ((rm = rowRe.exec(m[2])) !== null) {
+      const rowText = decodeEntities(stripTags(rm[1])).replace(/\s+/g, " ").trim();
+      const de = deaccent(rowText);
+      if (!taxCode) {
+        const tM = /ma so thue:\s*(\d{10}(?:-\d{3})?|\d{13})/i.exec(de);
+        if (tM) taxCode = tM[1];
+      }
+      if (!contactName) {
+        const cM = /^Người đại diện:\s*(.+)$/i.exec(rowText);
+        if (cM) contactName = cleanContactNameField(cM[1]);
+      }
+      if (!address) {
+        const aM = /^Địa chỉ:\s*(.+)$/i.exec(rowText);
+        if (aM) address = aM[1].trim();
+      }
+    }
+    if (!taxCode && !contactName) continue; // thiếu cả định danh lẫn liên hệ — thẻ rác, bỏ
+    const key = (taxCode || deaccent(name).replace(/[^a-z0-9]+/g, "")).toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    const row: ImportRow = { name };
+    if (taxCode) row.taxCode = taxCode;
+    if (contactName) row.contactName = contactName;
+    if (address) row.address = address.slice(0, 300);
+    rows.push(row);
+  }
+  return rows;
 }
 
 // ---------------- Entry point chính ----------------
@@ -507,7 +615,7 @@ export function cleanCompanyName(n: string): string {
 export type ExtractResult = {
   rows: ImportRow[];
   nextLinks: string[];
-  via: "table" | "text" | "json" | "none" | "profile" | "members";
+  via: "table" | "text" | "json" | "none" | "profile" | "members" | "cards";
 };
 
 /** Trích doanh nghiệp từ 1 trang HTML — hồ sơ dọc trước (trang chi tiết) → bảng ngang → member card → văn bản */
@@ -529,6 +637,34 @@ export function extractCompaniesFromHtml(html: string, baseUrl: string): Extract
     if (vp) {
       rows.push(vp);
       via = "profile";
+    }
+  }
+  // Hồ sơ dọc chưa có tên (bảng profile không chứa tên) → lấy từ h1/title
+  // PHẢI LÀM TRƯỚC KHI THÊM THẺ — nếu không điều kiện rows.length===1 sẽ chết;
+  // chỉ nhận khi hồ sơ có ≥1 trường liên hệ thật (MST/SĐT/email/người đại diện)
+  if (rows.length === 1 && !rows[0].name && (rows[0].taxCode || rows[0].phone || rows[0].email || rows[0].contactName)) {
+    const head = extractHeadingName(html);
+    if (head) {
+      rows[0].name = head.name;
+      if (!rows[0].taxCode && head.taxCode) rows[0].taxCode = head.taxCode;
+    }
+  }
+  // THẺ DANH BẠ (.tc-item) — chạy SONG SONG với hồ sơ dọc: mỗi trang hồ sơ
+  // tracuumst thường kèm ~8 DN liên quan (tên + MST + người đại diện + địa chỉ).
+  // Khử trùng lặp với hồ sơ chính theo MST/tên đã chuẩn hóa.
+  if (rows.length > 0) {
+    const existingKeys = new Set(
+      rows.map((r) => (r.taxCode ?? deaccent(r.name ?? "").replace(/[^a-z0-9]+/g, "")).toLowerCase()),
+    );
+    const cards = extractDirectoryCards(html).filter((c) => {
+      const k = (c.taxCode ?? deaccent(c.name ?? "").replace(/[^a-z0-9]+/g, "")).toLowerCase();
+      if (!k || existingKeys.has(k)) return false;
+      existingKeys.add(k);
+      return true;
+    });
+    if (cards.length > 0) {
+      rows.push(...cards);
+      if (via === "none") via = "cards";
     }
   }
   // Bảng ngang kiểu danh sách (nhiều DN mỗi trang)
@@ -565,8 +701,7 @@ export function extractCompaniesFromHtml(html: string, baseUrl: string): Extract
       via = "text";
     }
   }
-  // 1 hồ sơ duy nhất mà chưa có tên → lấy từ h1/title (trang chi tiết DN);
-  // chỉ nhận khi hồ sơ có ≥1 trường liên hệ thật (MST/SĐT/email) — né tiêu đề trang danh mục
+  // 1 hồ sơ chưa có tên ở đường TABLE/MEMBERS/TEXT (profile đã xử lý ở trên)
   if (rows.length === 1 && !rows[0].name && (rows[0].taxCode || rows[0].phone || rows[0].email)) {
     const head = extractHeadingName(html);
     if (head) {
@@ -574,13 +709,19 @@ export function extractCompaniesFromHtml(html: string, baseUrl: string): Extract
       if (!rows[0].taxCode && head.taxCode) rows[0].taxCode = head.taxCode;
     }
   }
-  // cổng chất lượng: tên hợp lệ + cắt đuôi MST + chặn phone=MST
+  // cổng chất lượng: tên hợp lệ + cắt đuôi MST + chặn phone=MST + SĐT bẩn (che ***)
   const clean = rows
     .map((r) => {
       const row = { ...r };
       if (row.name) row.name = cleanCompanyName(row.name);
       if (row.phone && row.taxCode && row.phone.replace(/\D/g, "") === row.taxCode.replace(/\D/g, "")) {
         delete row.phone; // MST bị nhầm thành SĐT — xóa, không suy diễn
+      }
+      // SĐT lẫn chữ trang trí ("0977 *** *** Hiện số Tra cứu...") → chỉ giữ số điện thoại thật
+      if (row.phone && /[^0-9;\s+]/.test(row.phone)) {
+        const real = uniq((row.phone.match(PHONE_RE) ?? []).map((p) => p.replace(/[^0-9+]/g, ""))).slice(0, 3);
+        if (real.length > 0) row.phone = real.join("; ");
+        else delete row.phone; // không có số hợp lệ — bỏ ô, không giữ rác
       }
       return row;
     })

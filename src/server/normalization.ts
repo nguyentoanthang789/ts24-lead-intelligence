@@ -165,11 +165,26 @@ export function normalizeEmail(raw?: string | null): string | null {
   return s;
 }
 
+/**
+ * Chuẩn hóa tên người liên lạc: cắt đuôi ký tự thừa, chống dữ liệu lẫn vào.
+ * CHỈ nhận họ tên người (chữ, dấu cách, chấm) — chặn SĐT/MST/email tràn vào ô tên.
+ */
+export function cleanContactName(raw?: string | null): string | null {
+  if (!raw) return null;
+  let s = String(raw).replace(/\s+/g, " ").trim();
+  s = s.replace(/[\s\-–—:;,]+$/, "").trim();
+  if (!s || s.length < 2 || s.length > 80) return null;
+  if (/[\d@]/.test(s)) return null; // tên người không chứa số/email
+  if (!/^[A-Za-zÀ-ỹĐđ\s.]+$/.test(s)) return null;
+  return s;
+}
+
 export type NormalizedCompany = {
   name: string;
   rawName: string | null;
   nameKey: string | null;
   taxCode: string | null;
+  contactName: string | null;
   province: string | null;
   address: string | null;
   website: string | null;

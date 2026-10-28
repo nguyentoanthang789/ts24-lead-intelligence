@@ -264,7 +264,7 @@ export async function runPipelineSteps(stepsCfg: PipelineSteps, trigger: Pipelin
     //    — mỗi nguồn tự giữ nhịp rateLimitPerMin của chính nó; tăng tốc bằng
     //    concurrency giữa các nguồn + đi sâu tối đa maxPagesPerSource mỗi nguồn.
     if (stepsCfg.autoRunSources) {
-      const networkTypes = ["COMPANY_WEBSITE", "PUBLIC_DIRECTORY", "OFFICIAL_API", "OFFICIAL_REGISTRY"];
+      const networkTypes = ["COMPANY_WEBSITE", "PUBLIC_DIRECTORY", "OFFICIAL_API", "OFFICIAL_REGISTRY", "PHONE_ENRICHMENT"];
       const sources = await db.source.findMany({
         where: { isActive: true, type: { in: networkTypes } },
         select: { id: true, name: true },

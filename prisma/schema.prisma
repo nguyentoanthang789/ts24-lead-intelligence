@@ -21,6 +21,8 @@ model Company {
   taxCode            String?
   /// Trạng thái xác thực MST: UNVERIFIED | VERIFIED
   taxCodeStatus      String    @default("UNVERIFIED")
+  /// Tên người liên lạc / người đại diện theo pháp luật (từ nguồn công khai — không suy diễn)
+  contactName        String?
   province           String?
   address            String?
   website            String?
